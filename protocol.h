@@ -7,6 +7,8 @@
 #include "common.h"
 
 #define PROTOCOL_HEADER_SIZE 6
+#define PROTOCOL_VECTOR_DIM DEFAULT_MODEL_DIM
+#define PROTOCOL_VECTOR_PAYLOAD_SIZE ((uint32_t)(PROTOCOL_VECTOR_DIM * sizeof(float)))
 
 typedef enum {
     MSG_INVALID = 0,
@@ -71,12 +73,19 @@ int protocol_flush_outgoing(int fd, OutgoingMessage *msg);
 int protocol_read_message(int fd, ConnState *state, Message *out_msg);
 
 /*
- * message-specific helpers. these are just light wrappers around the generic
- * transport code, and you can flesh them out once the payload format is set.
+ * message-specific helpers. WEIGHTS and GRADIENT payloads carry exactly
+ * PROTOCOL_VECTOR_DIM floats. each float is encoded as a 32-bit IEEE-754 bit
+ * pattern in network byte order, and the dimension is fixed for the whole run
+ * rather than being included in the payload. this is important for portability
  */
+int protocol_validate_message(const Message *msg);
 int protocol_send_join(int fd);
 int protocol_send_weights(int fd, const float *weights, uint32_t dim);
 int protocol_send_gradient(int fd, const float *gradient, uint32_t dim);
 int protocol_send_terminate(int fd);
+int protocol_decode_join(const Message *msg);
+int protocol_decode_terminate(const Message *msg);
+int protocol_decode_weights(const Message *msg, float *weights_out, uint32_t *dim_out);
+int protocol_decode_gradient(const Message *msg, float *gradient_out, uint32_t *dim_out);
 
 #endif /* protocol_h */
