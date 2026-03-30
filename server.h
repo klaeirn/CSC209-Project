@@ -45,6 +45,10 @@ int server_remove_client_from_set(ServerState *state, int client_id);
  * Returns: pointer to ClientConnection on success, NULL if not found. */
 ClientConnection *server_get_client_by_id(ServerState *state, int client_id);
 
+/* Get the current number of connected clients.
+ * Returns: number of connected clients, or -1 if state is NULL. */
+int server_get_num_clients(ServerState *state);
+
 /* Main event loop: call select() to monitor sockets, accept new connections, read messages.
  * Continues until state->running becomes false. */
 void server_select_loop(ServerState *state);
