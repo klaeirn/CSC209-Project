@@ -14,6 +14,19 @@
  * - keep going until terminate shows up
  */
 
+void compute_gradient(float *weights, float *gradient, float *X, float y, int dim) {
+    float prediction = 0.0f;
+    for (int i = 0; i < dim; i++) {
+        prediction += weights[i] * X[i];
+    }
+
+    float error = prediction - y;
+
+    for (int i = 0; i < dim; i++) {
+        gradient[i] = 2.0f * error * X[i];
+    }
+}
+
 int main(int argc, char **argv) {
     const char *host = "127.0.0.1";
     int port = DEFAULT_SERVER_PORT;

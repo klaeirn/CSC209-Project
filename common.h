@@ -15,7 +15,11 @@
 /*
  * linear regression will probably send float vectors. keep the model
  * dimension configurable until we settle on an exact model.
+ * Threshold is the amount of clients buffer takes in for partial aggregation.
  */
 #define DEFAULT_MODEL_DIM 4
+#define THRESHOLD 3
+#define LEARNING_RATE (0.01f)
+#define MAX_ITERATIONS 10
 
 #endif /* common_h */
