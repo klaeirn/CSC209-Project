@@ -214,6 +214,14 @@ ClientConnection *server_get_client_by_id(ServerState *state, int client_id) {
     return NULL;
 }
 
+int server_get_num_clients(ServerState *state) {
+    /* Get the current number of connected clients. */
+    if (state == NULL) {
+        return -1;
+    }
+    return state->num_clients;
+}
+
 void server_select_loop(ServerState *state) {
     /* Main event loop: accept new clients, read messages, detect disconnects. */
     fd_set current_set;
