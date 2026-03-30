@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -53,11 +54,22 @@ int main(int argc, char **argv) {
     ConnState recv_state;
     int running = 1;
 
+    int delay_ms = 0;
+    float delay_probability = 0.0f;
+
     if (argc > 1) {
         host = argv[1];
     }
     if (argc > 2) {
         port = atoi(argv[2]);
+    }
+    if (argc > 3) {
+        delay_ms = atoi(argv[3]); /* delay in milliseconds for straggler simulation */
+    }
+    if (argc > 4) {
+        delay_probability = atof(argv[4]); /* 0.0-1.0 chance to delay each gradient send */
+        if (delay_probability < 0.0f) delay_probability = 0.0f;
+        if (delay_probability > 1.0f) delay_probability = 1.0f;
     }
 
     printf("Client connecting to %s:%d\n", host, port);
@@ -95,6 +107,7 @@ int main(int argc, char **argv) {
     }
 
     printf("Connected to server\n");
+    srand((unsigned)time(NULL) ^ (unsigned)socket_fd);
 
     /* Initialize protocol state */
     protocol_init_conn_state(&recv_state);
@@ -128,6 +141,12 @@ int main(int argc, char **argv) {
 
                     /* Compute and send gradient */
                     compute_gradient(weights, gradient, X, y, DEFAULT_MODEL_DIM);
+
+                    if (delay_ms > 0 && ((float)rand() / RAND_MAX) < delay_probability) {
+                        printf("Simulating client delay: %dms\n", delay_ms);
+                        usleep(delay_ms * 1000);
+                    }
+
                     protocol_send_gradient(socket_fd, gradient, DEFAULT_MODEL_DIM);
                     printf("Sent gradient\n");
                 }

@@ -2,6 +2,8 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+
+extern int should_terminate;
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -269,6 +271,11 @@ void server_select_loop(ServerState *state) {
                     close(client_fd);
                 }
             }
+        }
+
+        /* Check whether server already decided to terminate training */
+        if (should_terminate) {
+            break;
         }
 
         /* Check each connected client for incoming data */

@@ -17,6 +17,7 @@ float weights[DEFAULT_MODEL_DIM];
 float gradient_buffer[THRESHOLD][DEFAULT_MODEL_DIM];
 int gradient_count = 0;
 int iterations = 0;
+int should_terminate = 0;
 
 void broadcast_weights() {
     for (int i = 0; i < num_clients; i++) {
@@ -96,11 +97,17 @@ void handle_gradient(const Message *msg) {
             weights[i] -= LEARNING_RATE * average[i];
         }
 
+        iterations++;
         printf("Weights updated (iteration=%d)\n", iterations);
 
         broadcast_weights();
 
-        iterations++;
+        if (iterations >= MAX_ITERATIONS) {
+            printf("Reached MAX_ITERATIONS (%d), broadcasting TERMINATE\n", iterations);
+            broadcast_terminate();
+            should_terminate = 1;
+        }
+
         gradient_count = 0;
     }
 }

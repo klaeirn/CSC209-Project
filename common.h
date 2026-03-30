@@ -9,7 +9,7 @@
  */
 
 #define DEFAULT_SERVER_PORT 5000
-#define MAX_CLIENTS FD_SETSIZE // this is the maximum number of clients that can be connected to the server.
+#define MAX_CLIENTS 12 // this is the maximum number of clients that can be connected to the server.
 #define MAX_MESSAGE_SIZE 300
 
 /*
@@ -20,6 +20,6 @@
 #define DEFAULT_MODEL_DIM 4
 #define THRESHOLD 3
 #define LEARNING_RATE (0.01f)
-#define MAX_ITERATIONS 10
+#define MAX_ITERATIONS 100
 
 #endif /* common_h */
