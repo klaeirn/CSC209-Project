@@ -286,6 +286,11 @@ void server_select_loop(ServerState *state) {
                     /* Complete message received - dispatch to handler */
                     fprintf(stderr, "Message received from client_id=%d, type=%u, length=%u\n",
                             client->client_id, incoming_msg.header.type, incoming_msg.header.length);
+
+                    /* Call the message handler (defined in training.c/server.c) */
+                    extern void handle_message(const Message *msg);
+                    handle_message(&incoming_msg);
+
                     protocol_free_message(&incoming_msg);
                 } else if (read_result == -1) {
                     /* Error or disconnect */

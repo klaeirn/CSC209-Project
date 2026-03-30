@@ -30,8 +30,48 @@ void broadcast_terminate() {
     }
 }
 
-void handle_gradient(void *payload) {
-    float *gradient = (float *)payload; 
+void handle_message(const Message *msg) {
+    if (msg == NULL) {
+        return;
+    }
+
+    switch (msg->header.type) {
+        case MSG_JOIN:
+            printf("Client joined training\n");
+            break;
+
+        case MSG_GRADIENT:
+            printf("Received gradient\n");
+            handle_gradient(msg);
+            break;
+
+        case MSG_WEIGHTS:
+            printf("Received unexpected WEIGHTS message from client\n");
+            break;
+
+        case MSG_TERMINATE:
+            printf("Received TERMINATE from client\n");
+            break;
+
+        default:
+            printf("Unknown message type: %u\n", msg->header.type);
+            break;
+    }
+}
+
+void handle_gradient(const Message *msg) {
+    float gradient[DEFAULT_MODEL_DIM] = {0};
+    uint32_t dim = 0;
+
+    if (protocol_decode_gradient(msg, gradient, &dim) != 0) {
+        fprintf(stderr, "Failed to decode gradient\n");
+        return;
+    }
+
+    if (gradient_count >= THRESHOLD) {
+        fprintf(stderr, "Gradient buffer full, dropping gradient\n");
+        return;
+    }
 
     for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
         gradient_buffer[gradient_count][i] = gradient[i];
@@ -47,7 +87,7 @@ void handle_gradient(void *payload) {
                 average[i] += gradient_buffer[j][i];
             }
         }
-        
+
         for (int j = 0; j < DEFAULT_MODEL_DIM; j++) {
             average[j] = average[j] / gradient_count;
         }
@@ -56,7 +96,7 @@ void handle_gradient(void *payload) {
             weights[i] -= LEARNING_RATE * average[i];
         }
 
-        printf("Weights updated\n");
+        printf("Weights updated (iteration=%d)\n", iterations);
 
         broadcast_weights();
 
@@ -69,19 +109,26 @@ int main(int argc, char **argv) {
     int port = DEFAULT_SERVER_PORT;
     ServerState server_state;
     int listening_socket;
-    
+
     if (argc > 1) {
         port = atoi(argv[1]);
     }
 
     printf("Server starting on port %d\n", port);
 
+    /* Create listening socket */
+    listening_socket = server_initialize_listening_socket(port);
+    if (listening_socket < 0) {
+        fprintf(stderr, "Failed to initialize listening socket\n");
+        return 1;
+    }
+
     /* Initialize server state */
     memset(&server_state, 0, sizeof(server_state));
     server_state.listening_socket = listening_socket;
     server_state.max_fd = listening_socket;
     server_state.running = 1;
-    
+
     /* Add listening socket to the read_set */
     FD_ZERO(&server_state.read_set);
     FD_SET(listening_socket, &server_state.read_set);
