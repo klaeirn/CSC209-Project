@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
 
 /*
  * Main server program: initializes listening socket and runs select() event loop.
@@ -18,10 +19,18 @@ int should_terminate = 0;
 
 ServerState server_state;
 
+void handle_gradient(const Message *msg);
+
 void broadcast_weights() {
     for (int i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
         if (server_state.clients[i].connected) {
-            protocol_send_weights(server_state.clients[i].socket_fd, weights, DEFAULT_MODEL_DIM);
+            if (protocol_send_weights(server_state.clients[i].socket_fd,
+                                      weights,
+                                      DEFAULT_MODEL_DIM) != 0) {
+                fprintf(stderr, "Failed to send weights to client_id=%d (fd=%d)\n",
+                        server_state.clients[i].client_id,
+                        server_state.clients[i].socket_fd);
+            }
         }
     }
 }
@@ -29,7 +38,11 @@ void broadcast_weights() {
 void broadcast_terminate() {
     for (int i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
         if (server_state.clients[i].connected) {
-            protocol_send_terminate(server_state.clients[i].socket_fd);
+            if (protocol_send_terminate(server_state.clients[i].socket_fd) != 0) {
+                fprintf(stderr, "Failed to send terminate to client_id=%d (fd=%d)\n",
+                        server_state.clients[i].client_id,
+                        server_state.clients[i].socket_fd);
+            }
         }
     }
 }
@@ -42,6 +55,11 @@ void handle_message(const Message *msg) {
     switch (msg->header.type) {
         case MSG_JOIN:
             printf("Client joined training\n");
+            /*
+             * Kick off training by sending current weights whenever a client joins.
+             * Without this, clients wait forever for the first WEIGHTS message.
+             */
+            broadcast_weights();
             break;
 
         case MSG_GRADIENT:
@@ -117,8 +135,10 @@ void handle_gradient(const Message *msg) {
 
 int main(int argc, char **argv) {
     int port = DEFAULT_SERVER_PORT;
-    ServerState server_state;
     int listening_socket;
+
+    /* Keep server alive if a client disconnects during broadcast. */
+    signal(SIGPIPE, SIG_IGN);
 
     if (argc > 1) {
         port = atoi(argv[1]);

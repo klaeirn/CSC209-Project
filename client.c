@@ -7,10 +7,12 @@
 #include <unistd.h>
 #include <time.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <signal.h>
 
 /*
  * client skeleton:
@@ -26,6 +28,37 @@ static int set_nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags == -1) return -1;
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
+
+static int wait_for_connect(int fd) {
+    fd_set write_fds;
+    struct timeval tv;
+    int ready;
+    int so_error = 0;
+    socklen_t so_error_len = sizeof(so_error);
+
+    FD_ZERO(&write_fds);
+    FD_SET(fd, &write_fds);
+    tv.tv_sec = 5;
+    tv.tv_usec = 0;
+
+    ready = select(fd + 1, NULL, &write_fds, NULL, &tv);
+    if (ready <= 0) {
+        if (ready == 0) {
+            errno = ETIMEDOUT;
+        }
+        return -1;
+    }
+
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &so_error_len) < 0) {
+        return -1;
+    }
+    if (so_error != 0) {
+        errno = so_error;
+        return -1;
+    }
+
+    return 0;
 }
 
 void compute_gradient(float *weights, float *gradient, float *X, float y, int dim) {
@@ -56,6 +89,9 @@ int main(int argc, char **argv) {
 
     int delay_ms = 0;
     float delay_probability = 0.0f;
+
+    /* Prevent process termination on write() to a closed socket. */
+    signal(SIGPIPE, SIG_IGN);
 
     if (argc > 1) {
         host = argv[1];
@@ -98,12 +134,17 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (connect(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        if (errno != EINPROGRESS) {
-            perror("connect");
-            close(socket_fd);
-            return 1;
-        }
+    if (connect(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0 &&
+        errno != EINPROGRESS) {
+        perror("connect");
+        close(socket_fd);
+        return 1;
+    }
+
+    if (wait_for_connect(socket_fd) < 0) {
+        perror("connect completion");
+        close(socket_fd);
+        return 1;
     }
 
     printf("Connected to server\n");
@@ -117,7 +158,11 @@ int main(int argc, char **argv) {
 
     /* Send JOIN message */
     printf("Sending JOIN message\n");
-    protocol_send_join(socket_fd);
+    if (protocol_send_join(socket_fd) != 0) {
+        perror("send join");
+        close(socket_fd);
+        return 1;
+    }
 
     /* Training loop */
     while (running) {
@@ -147,8 +192,12 @@ int main(int argc, char **argv) {
                         usleep(delay_ms * 1000);
                     }
 
-                    protocol_send_gradient(socket_fd, gradient, DEFAULT_MODEL_DIM);
-                    printf("Sent gradient\n");
+                    if (protocol_send_gradient(socket_fd, gradient, DEFAULT_MODEL_DIM) != 0) {
+                        perror("send gradient");
+                        running = 0;
+                    } else {
+                        printf("Sent gradient\n");
+                    }
                 }
 
             } else if (msg.header.type == MSG_TERMINATE) {
