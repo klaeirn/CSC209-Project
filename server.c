@@ -10,24 +10,27 @@
  * Main server program: initializes listening socket and runs select() event loop.
  */
 
-int client_fds[MAX_CLIENTS];
-int num_clients;
-
 float weights[DEFAULT_MODEL_DIM];
 float gradient_buffer[THRESHOLD][DEFAULT_MODEL_DIM];
 int gradient_count = 0;
 int iterations = 0;
 int should_terminate = 0;
 
+ServerState server_state;
+
 void broadcast_weights() {
-    for (int i = 0; i < num_clients; i++) {
-        protocol_send_weights(client_fds[i], weights, DEFAULT_MODEL_DIM);
+    for (int i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
+        if (server_state.clients[i].connected) {
+            protocol_send_weights(server_state.clients[i].socket_fd, weights, DEFAULT_MODEL_DIM);
+        }
     }
 }
 
 void broadcast_terminate() {
-    for (int i = 0; i < num_clients; i++) {
-        protocol_send_terminate(client_fds[i]);
+    for (int i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
+        if (server_state.clients[i].connected) {
+            protocol_send_terminate(server_state.clients[i].socket_fd);
+        }
     }
 }
 
