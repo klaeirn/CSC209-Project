@@ -44,7 +44,7 @@ static int parse_int_arg(const char *text, int min_value, int max_value, int *ou
     return 0;
 }
 
-static void spawn_local_clients(const char *host, int port, int count) {
+static void spawn_local_clients(const char *host, int port, int count, int stress_mode) {
     char port_str[16];
 
     if (count <= 0) {
@@ -65,12 +65,23 @@ static void spawn_local_clients(const char *host, int port, int count) {
         }
 
         if (pid == 0) {
-            execl("./client",
-                  "./client",
-                  host,
-                  port_str,
-                  shard_path,
-                  (char *)NULL);
+            if (stress_mode && i == 1) {
+                execl("./client",
+                      "./client",
+                      host,
+                      port_str,
+                      shard_path,
+                      "2000",
+                      "1.0",
+                      (char *)NULL);
+            } else {
+                execl("./client",
+                      "./client",
+                      host,
+                      port_str,
+                      shard_path,
+                      (char *)NULL);
+            }
             perror("execl ./client");
             _exit(1);
         }
@@ -91,14 +102,44 @@ static void wait_for_spawned_clients(void) {
     }
 }
 
+static int queue_client_weights(ClientConnection *client) {
+    OutgoingMessage outgoing;
+    memset(&outgoing, 0, sizeof(outgoing));
+
+    if (protocol_prepare_weights_outgoing(&outgoing, weights, DEFAULT_MODEL_DIM) != 0) {
+        return -1;
+    }
+
+    if (client->has_outgoing) {
+        protocol_free_outgoing(&client->outgoing_msg);
+    }
+    client->outgoing_msg = outgoing;
+    client->has_outgoing = 1;
+    return 0;
+}
+
+static int queue_client_terminate(ClientConnection *client) {
+    OutgoingMessage outgoing;
+    memset(&outgoing, 0, sizeof(outgoing));
+
+    if (protocol_prepare_terminate_outgoing(&outgoing) != 0) {
+        return -1;
+    }
+
+    if (client->has_outgoing) {
+        protocol_free_outgoing(&client->outgoing_msg);
+    }
+    client->outgoing_msg = outgoing;
+    client->has_outgoing = 1;
+    return 0;
+}
+
 void broadcast_weights() {
     printf("Broadcasting updated weights to all clients...\n");
     for (int i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
         if (server_state.clients[i].connected) {
-            if (protocol_send_weights(server_state.clients[i].socket_fd,
-                                      weights,
-                                      DEFAULT_MODEL_DIM) != 0) {
-                fprintf(stderr, "Failed to send weights to client_id=%d (fd=%d)\n",
+            if (queue_client_weights(&server_state.clients[i]) != 0) {
+                fprintf(stderr, "Failed to queue weights for client_id=%d (fd=%d)\n",
                         server_state.clients[i].client_id,
                         server_state.clients[i].socket_fd);
             }
@@ -112,8 +153,8 @@ void broadcast_terminate() {
     printf("Broadcasting TERMINATE to all clients...\n");
     for (int i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
         if (server_state.clients[i].connected) {
-            if (protocol_send_terminate(server_state.clients[i].socket_fd) != 0) {
-                fprintf(stderr, "Failed to send terminate to client_id=%d (fd=%d)\n",
+            if (queue_client_terminate(&server_state.clients[i]) != 0) {
+                fprintf(stderr, "Failed to queue terminate for client_id=%d (fd=%d)\n",
                         server_state.clients[i].client_id,
                         server_state.clients[i].socket_fd);
             }
@@ -245,6 +286,7 @@ int main(int argc, char **argv) {
     int port = DEFAULT_SERVER_PORT;
     int listening_socket;
     int auto_client_count = 12;
+    int stress_mode = 0;
 
     /* keep the server alive if a client disconnects during broadcast */
     signal(SIGPIPE, SIG_IGN);
@@ -258,6 +300,12 @@ int main(int argc, char **argv) {
     if (argc > 2) {
         if (parse_int_arg(argv[2], 0, INT_MAX, &auto_client_count) != 0) {
             fprintf(stderr, "Invalid client count: %s (expected >= 0)\n", argv[2]);
+            return 1;
+        }
+    }
+    if (argc > 3) {
+        if (parse_int_arg(argv[3], 0, 1, &stress_mode) != 0) {
+            fprintf(stderr, "Invalid stress mode: %s (expected 0 or 1)\n", argv[3]);
             return 1;
         }
     }
@@ -281,7 +329,10 @@ int main(int argc, char **argv) {
     printf("Listening socket initialized and ready for connections\n");
     if (auto_client_count > 0) {
         printf("Auto-spawning %d local clients\n", auto_client_count);
-        spawn_local_clients("127.0.0.1", port, auto_client_count);
+        if (stress_mode) {
+            printf("Stress mode enabled: first auto client uses delay=2000ms and probability=1.0\n");
+        }
+        spawn_local_clients("127.0.0.1", port, auto_client_count, stress_mode);
     }
 
     server_select_loop(&server_state);

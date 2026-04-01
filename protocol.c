@@ -185,6 +185,20 @@ int protocol_prepare_outgoing(OutgoingMessage *msg,
     return 0;
 }
 
+int protocol_prepare_weights_outgoing(OutgoingMessage *msg,
+                                      const float *weights,
+                                      uint32_t dim) {
+    uint8_t payload[PROTOCOL_VECTOR_PAYLOAD_SIZE];
+    if (protocol_encode_vector_payload(weights, dim, payload) < 0) {
+        return -1;
+    }
+    return protocol_prepare_outgoing(msg, MSG_WEIGHTS, payload, PROTOCOL_VECTOR_PAYLOAD_SIZE);
+}
+
+int protocol_prepare_terminate_outgoing(OutgoingMessage *msg) {
+    return protocol_prepare_outgoing(msg, MSG_TERMINATE, NULL, 0);
+}
+
 void protocol_free_outgoing(OutgoingMessage *msg) {
     if (msg == NULL) {
         return;

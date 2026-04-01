@@ -11,7 +11,9 @@ typedef struct {
     int socket_fd;   
     int client_id; 
     int connected;   
-    ConnState recv_state;  
+    ConnState recv_state;
+    OutgoingMessage outgoing_msg;
+    int has_outgoing;
 } ClientConnection;
 
 typedef struct {

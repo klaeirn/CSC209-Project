@@ -121,6 +121,8 @@ int server_add_client_to_set(ServerState *state, int client_fd) {
     state->clients[assigned_id].connected = 1;
     state->clients[assigned_id].client_id = assigned_id;
     protocol_init_conn_state(&state->clients[assigned_id].recv_state);
+    memset(&state->clients[assigned_id].outgoing_msg, 0, sizeof(state->clients[assigned_id].outgoing_msg));
+    state->clients[assigned_id].has_outgoing = 0;
 
     FD_SET(client_fd, &state->read_set);
     if (client_fd > state->max_fd) {
@@ -156,6 +158,10 @@ int server_remove_client_from_set(ServerState *state, int client_id) {
     }
     FD_CLR(old_fd, &state->read_set);
 
+    if (client->has_outgoing) {
+        protocol_free_outgoing(&client->outgoing_msg);
+        client->has_outgoing = 0;
+    }
     protocol_reset_conn_state(&client->recv_state);
     client->connected = 0;
     client->socket_fd = -1;
@@ -203,7 +209,8 @@ int server_get_num_clients(ServerState *state) {
 }
 
 void server_select_loop(ServerState *state) {
-    fd_set current_set;
+    fd_set current_read_set;
+    fd_set current_write_set;
     struct timeval tv;
     int select_ret;
     int i;
@@ -216,11 +223,18 @@ void server_select_loop(ServerState *state) {
     }
 
     while (state->running) {
-        memcpy(&current_set, &state->read_set, sizeof(fd_set));
+        memcpy(&current_read_set, &state->read_set, sizeof(fd_set));
+        FD_ZERO(&current_write_set);
+        for (i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
+            client = &state->clients[i];
+            if (client->connected && client->socket_fd >= 0 && client->has_outgoing) {
+                FD_SET(client->socket_fd, &current_write_set);
+            }
+        }
         tv.tv_sec = 1;
         tv.tv_usec = 0;
 
-        select_ret = select(state->max_fd + 1, &current_set, NULL, NULL, &tv);
+        select_ret = select(state->max_fd + 1, &current_read_set, &current_write_set, NULL, &tv);
 
         if (select_ret < 0) {
             if (errno == EINTR) {
@@ -235,7 +249,7 @@ void server_select_loop(ServerState *state) {
             continue;
         }
 
-        if (FD_ISSET(state->listening_socket, &current_set)) {
+        if (FD_ISSET(state->listening_socket, &current_read_set)) {
             ClientConnection new_client;
             int client_fd = server_accept_new_client(state->listening_socket, &new_client);
 
@@ -263,7 +277,7 @@ void server_select_loop(ServerState *state) {
                 continue;
             }
 
-            if (FD_ISSET(client->socket_fd, &current_set)) {
+            if (FD_ISSET(client->socket_fd, &current_read_set)) {
                 read_result = protocol_read_message(client->socket_fd, &client->recv_state, &incoming_msg);
 
                 if (read_result == 1) {
@@ -280,6 +294,22 @@ void server_select_loop(ServerState *state) {
                     }
                 } else if (read_result == -1) {
                     fprintf(stderr, "Client disconnect or error: client_id=%d\n", client->client_id);
+                    server_remove_client_from_set(state, client->client_id);
+                    continue;
+                }
+            }
+
+            if (!client->connected || client->socket_fd < 0 || !client->has_outgoing) {
+                continue;
+            }
+
+            if (FD_ISSET(client->socket_fd, &current_write_set)) {
+                int flush_result = protocol_flush_outgoing(client->socket_fd, &client->outgoing_msg);
+                if (flush_result == 1) {
+                    protocol_free_outgoing(&client->outgoing_msg);
+                    client->has_outgoing = 0;
+                } else if (flush_result < 0) {
+                    fprintf(stderr, "Client write error: client_id=%d\n", client->client_id);
                     server_remove_client_from_set(state, client->client_id);
                 }
             }
