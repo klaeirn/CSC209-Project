@@ -72,12 +72,6 @@ int protocol_flush_outgoing(int fd, OutgoingMessage *msg);
 
 int protocol_read_message(int fd, ConnState *state, Message *out_msg);
 
-/*
- * message-specific helpers. WEIGHTS and GRADIENT payloads carry exactly
- * PROTOCOL_VECTOR_DIM floats. each float is encoded as a 32-bit IEEE-754 bit
- * pattern in network byte order, and the dimension is fixed for the whole run
- * rather than being included in the payload. this is important for portability
- */
 int protocol_validate_message(const Message *msg);
 int protocol_send_join(int fd);
 int protocol_send_weights(int fd, const float *weights, uint32_t dim);
@@ -88,4 +82,4 @@ int protocol_decode_terminate(const Message *msg);
 int protocol_decode_weights(const Message *msg, float *weights_out, uint32_t *dim_out);
 int protocol_decode_gradient(const Message *msg, float *gradient_out, uint32_t *dim_out);
 
-#endif /* protocol_h */
+#endif

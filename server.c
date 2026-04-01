@@ -10,10 +10,6 @@
 #include <unistd.h>
 #include <sys/wait.h>
 
-/*
- * Main server program: initializes listening socket and runs select() event loop.
- */
-
 float weights[DEFAULT_MODEL_DIM];
 float gradient_buffer[THRESHOLD][DEFAULT_MODEL_DIM];
 int gradient_count = 0;
@@ -74,6 +70,7 @@ static void wait_for_spawned_clients(void) {
 }
 
 void broadcast_weights() {
+    printf("Broadcasting updated weights to all clients...\n");
     for (int i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
         if (server_state.clients[i].connected) {
             if (protocol_send_weights(server_state.clients[i].socket_fd,
@@ -85,9 +82,12 @@ void broadcast_weights() {
             }
         }
     }
+    printf("Weights broadcast complete.\n");
 }
 
+
 void broadcast_terminate() {
+    printf("Broadcasting TERMINATE to all clients...\n");
     for (int i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
         if (server_state.clients[i].connected) {
             if (protocol_send_terminate(server_state.clients[i].socket_fd) != 0) {
@@ -97,6 +97,7 @@ void broadcast_terminate() {
             }
         }
     }
+    printf("Terminate broadcast complete. Training finished.\n");
 }
 
 void handle_message(const Message *msg) {
@@ -152,8 +153,10 @@ void handle_gradient(const Message *msg) {
     }
 
     gradient_count++;
+    printf("Gradient %d/%d received\n", gradient_count, THRESHOLD);
 
     if (gradient_count >= THRESHOLD) {
+        printf("Aggregating gradients from %d clients...\n", gradient_count);
         float average[DEFAULT_MODEL_DIM] = {0};
 
         for (int j = 0; j < gradient_count; j++) {
@@ -166,12 +169,25 @@ void handle_gradient(const Message *msg) {
             average[j] = average[j] / gradient_count;
         }
 
+        printf("Aggregated gradients: [");
+        for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
+            printf("%.4f", average[i]);
+            if (i < DEFAULT_MODEL_DIM - 1) printf(", ");
+        }
+        printf("]\n");
+
+        printf("Applying weight updates...\n");
         for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
             weights[i] -= LEARNING_RATE * average[i];
         }
 
         iterations++;
-        printf("Weights updated (iteration=%d)\n", iterations);
+        printf("Weights updated (iteration=%d): [", iterations);
+        for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
+            printf("%.4f", weights[i]);
+            if (i < DEFAULT_MODEL_DIM - 1) printf(", ");
+        }
+        printf("]\n");
 
         if (iterations >= MAX_ITERATIONS) {
             printf("Reached MAX_ITERATIONS (%d), broadcasting TERMINATE\n", iterations);
@@ -188,6 +204,48 @@ void handle_gradient(const Message *msg) {
         gradient_count = 0;
     }
 }
+
+
+void handle_message(const Message *msg) {
+    if (msg == NULL) {
+        return;
+    }
+
+    switch (msg->header.type) {
+        case MSG_JOIN:
+            printf("Client joined training\n");
+            if (server_get_num_clients(&server_state) >= THRESHOLD) {
+                printf("Enough clients connected (%d >= %d), broadcasting initial weights\n", 
+                       server_get_num_clients(&server_state), THRESHOLD);
+                printf("Initial weights: [");
+                for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
+                    printf("%.4f", weights[i]);
+                    if (i < DEFAULT_MODEL_DIM - 1) printf(", ");
+                }
+                printf("]\n");
+                broadcast_weights();
+            }
+            break;
+
+        case MSG_GRADIENT:
+            printf("Received gradient\n");
+            handle_gradient(msg);
+            break;
+
+        case MSG_WEIGHTS:
+            printf("Received unexpected WEIGHTS message from client\n");
+            break;
+
+        case MSG_TERMINATE:
+            printf("Received TERMINATE from client\n");
+            break;
+
+        default:
+            printf("Unknown message type: %u\n", msg->header.type);
+            break;
+    }
+}
+
 
 int main(int argc, char **argv) {
     int port = DEFAULT_SERVER_PORT;
@@ -210,20 +268,17 @@ int main(int argc, char **argv) {
 
     printf("Server starting on port %d\n", port);
 
-    /* Create listening socket */
     listening_socket = server_initialize_listening_socket(port);
     if (listening_socket < 0) {
         fprintf(stderr, "Failed to initialize listening socket\n");
         return 1;
     }
 
-    /* Initialize server state */
     memset(&server_state, 0, sizeof(server_state));
     server_state.listening_socket = listening_socket;
     server_state.max_fd = listening_socket;
     server_state.running = 1;
 
-    /* Add listening socket to the read_set */
     FD_ZERO(&server_state.read_set);
     FD_SET(listening_socket, &server_state.read_set);
 
@@ -233,10 +288,7 @@ int main(int argc, char **argv) {
         spawn_local_clients("127.0.0.1", port, auto_client_count);
     }
 
-    /* Run the main select() event loop */
     server_select_loop(&server_state);
-
-    /* Clean up resources */
     server_cleanup(&server_state);
     wait_for_spawned_clients();
 

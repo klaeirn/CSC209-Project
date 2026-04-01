@@ -15,7 +15,7 @@
 #include <signal.h>
 
 /*
- * client skeleton:
+ * client:
  * - connect to the server
  * - send join
  * - wait for weights
@@ -223,7 +223,6 @@ int main(int argc, char **argv) {
            dataset_path,
            sample_count);
 
-    /* Create socket */
     socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_fd < 0) {
         perror("socket");
@@ -231,7 +230,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Set non-blocking */
     if (set_nonblocking(socket_fd) < 0) {
         perror("fcntl");
         close(socket_fd);
@@ -239,7 +237,6 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Connect to server */
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
@@ -268,13 +265,10 @@ int main(int argc, char **argv) {
     printf("Connected to server\n");
     srand((unsigned)time(NULL) ^ (unsigned)socket_fd);
 
-    /* Initialize protocol state */
     protocol_init_conn_state(&recv_state);
 
-    /* Initialize weights to zeros */
     memset(weights, 0, sizeof(weights));
 
-    /* Send JOIN message */
     printf("Sending JOIN message\n");
     if (protocol_send_join(socket_fd) != 0) {
         perror("send join");
@@ -283,16 +277,13 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    /* Training loop */
     while (running) {
         int read_result = protocol_read_message(socket_fd, &recv_state, &msg);
 
         if (read_result == 1) {
-            /* Complete message received */
             printf("Received message type=%u\n", msg.header.type);
 
             if (msg.header.type == MSG_WEIGHTS) {
-                /* Received updated weights */
                 uint32_t dim = 0;
                 if (protocol_decode_weights(&msg, weights, &dim) == 0) {
                     DataSample *sample = &samples[sample_index % sample_count];
@@ -302,6 +293,13 @@ int main(int argc, char **argv) {
 
                     /* Compute and send gradient */
                     compute_gradient(weights, gradient, sample->x, sample->y, DEFAULT_MODEL_DIM);
+
+                    printf("Computed gradient: [");
+                    for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
+                        printf("%.4f", gradient[i]);
+                        if (i < DEFAULT_MODEL_DIM - 1) printf(", ");
+                    }
+                    printf("]\n");
 
                     if (delay_ms > 0 && ((float)rand() / RAND_MAX) < delay_probability) {
                         printf("Simulating client delay: %dms\n", delay_ms);
@@ -319,20 +317,17 @@ int main(int argc, char **argv) {
                 }
 
             } else if (msg.header.type == MSG_TERMINATE) {
-                /* Server terminated training */
                 printf("Received TERMINATE message\n");
                 running = 0;
             }
 
             protocol_free_message(&msg);
         } else if (read_result == -1) {
-            /* Disconnect */
             printf("Disconnected from server\n");
             running = 0;
         }
-        /* read_result == 0 means partial message, continue */
 
-        usleep(100000);  /* Small delay to avoid busy spinning */
+        usleep(100000); 
     }
 
     close(socket_fd);
