@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 #include <unistd.h>
 /*
  * protocol payload format:
@@ -225,6 +226,11 @@ int protocol_send_message(int fd,
                           uint32_t length) {
     OutgoingMessage msg;
     int flush_status;
+    int select_status;
+    fd_set write_fds;
+    struct timeval tv;
+    int timeout_count = 0;
+    const int max_timeouts = 5;
 
     memset(&msg, 0, sizeof(msg));
     if (protocol_prepare_outgoing(&msg, type, payload, length) < 0) {
@@ -232,7 +238,31 @@ int protocol_send_message(int fd,
     }
     flush_status = protocol_flush_outgoing(fd, &msg);
     while (flush_status == 0) {
-      flush_status = protocol_flush_outgoing(fd, &msg);
+        FD_ZERO(&write_fds);
+        FD_SET(fd, &write_fds);
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+
+        select_status = select(fd + 1, NULL, &write_fds, NULL, &tv);
+        if (select_status < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            flush_status = -1;
+            break;
+        }
+        if (select_status == 0) {
+            timeout_count++;
+            if (timeout_count >= max_timeouts) {
+                errno = ETIMEDOUT;
+                flush_status = -1;
+                break;
+            }
+            continue;
+        }
+
+        timeout_count = 0;
+        flush_status = protocol_flush_outgoing(fd, &msg);
     }
 
     protocol_free_outgoing(&msg);
