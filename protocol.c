@@ -7,11 +7,11 @@
 #include <sys/select.h>
 #include <unistd.h>
 /*
- * protocol payload format:
- * - JOIN and TERMINATE have no payload
- * - WEIGHTS and GRADIENT have exactly PROTOCOL_VECTOR_DIM floats
- * - each float is transmitted as a 32-bit IEEE-754 bit pattern in network byte
- *   order so the payload is portable across endianness for example (big endian vs little endian)
+ * protocol payload format
+ * - join and terminate have no payload
+ * - weights and gradient always carry exactly protocol_vector_dim floats
+ * - each float is sent as a 32-bit ieee-754 bit pattern in network byte order
+ *   so payloads stay portable across endianness like big endian and little endian
  */
 
 _Static_assert(sizeof(float) == sizeof(uint32_t),

@@ -252,6 +252,11 @@ void server_select_loop(ServerState *state) {
         }
 
         for (i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
+            if (should_terminate) {
+                state->running = 0;
+                break;
+            }
+
             client = &state->clients[i];
 
             if (!client->connected || client->socket_fd < 0) {
@@ -269,6 +274,10 @@ void server_select_loop(ServerState *state) {
                     handle_message(&incoming_msg);
 
                     protocol_free_message(&incoming_msg);
+                    if (should_terminate) {
+                        state->running = 0;
+                        break;
+                    }
                 } else if (read_result == -1) {
                     fprintf(stderr, "Client disconnect or error: client_id=%d\n", client->client_id);
                     server_remove_client_from_set(state, client->client_id);

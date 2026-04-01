@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <sys/wait.h>
+#include <limits.h>
 
 float weights[DEFAULT_MODEL_DIM];
 float gradient_buffer[THRESHOLD][DEFAULT_MODEL_DIM];
@@ -21,6 +22,27 @@ static pid_t spawned_client_pids[64];
 static int spawned_client_count = 0;
 
 void handle_gradient(const Message *msg);
+
+static int parse_int_arg(const char *text, int min_value, int max_value, int *out_value) {
+    char *endptr;
+    long parsed;
+
+    if (text == NULL || out_value == NULL) {
+        return -1;
+    }
+
+    errno = 0;
+    parsed = strtol(text, &endptr, 10);
+    if (errno != 0 || endptr == text || *endptr != '\0') {
+        return -1;
+    }
+    if (parsed < min_value || parsed > max_value) {
+        return -1;
+    }
+
+    *out_value = (int)parsed;
+    return 0;
+}
 
 static void spawn_local_clients(const char *host, int port, int count) {
     char port_str[16];
@@ -100,46 +122,18 @@ void broadcast_terminate() {
     printf("Terminate broadcast complete. Training finished.\n");
 }
 
-void handle_message(const Message *msg) {
-    if (msg == NULL) {
-        return;
-    }
-
-    switch (msg->header.type) {
-        case MSG_JOIN:
-            printf("Client joined training\n");
-            /*
-             * Kick off training by sending current weights whenever a client joins.
-             * Without this, clients wait forever for the first WEIGHTS message.
-             */
-            broadcast_weights();
-            break;
-
-        case MSG_GRADIENT:
-            printf("Received gradient\n");
-            handle_gradient(msg);
-            break;
-
-        case MSG_WEIGHTS:
-            printf("Received unexpected WEIGHTS message from client\n");
-            break;
-
-        case MSG_TERMINATE:
-            printf("Received TERMINATE from client\n");
-            break;
-
-        default:
-            printf("Unknown message type: %u\n", msg->header.type);
-            break;
-    }
-}
-
 void handle_gradient(const Message *msg) {
     float gradient[DEFAULT_MODEL_DIM] = {0};
     uint32_t dim = 0;
 
     if (protocol_decode_gradient(msg, gradient, &dim) != 0) {
         fprintf(stderr, "Failed to decode gradient\n");
+        return;
+    }
+    if (dim != DEFAULT_MODEL_DIM) {
+        fprintf(stderr, "Gradient dimension mismatch: expected=%d got=%u\n",
+                DEFAULT_MODEL_DIM,
+                dim);
         return;
     }
 
@@ -192,8 +186,8 @@ void handle_gradient(const Message *msg) {
         if (iterations >= MAX_ITERATIONS) {
             printf("Reached MAX_ITERATIONS (%d), broadcasting TERMINATE\n", iterations);
             /*
-             * Do not send a fresh WEIGHTS packet on the terminal round; it can
-             * trigger an unnecessary client gradient right before shutdown.
+             * skip sending fresh weights on the final round
+             * this avoids an extra client gradient right before shutdown
              */
             broadcast_terminate();
             should_terminate = 1;
@@ -252,16 +246,18 @@ int main(int argc, char **argv) {
     int listening_socket;
     int auto_client_count = 12;
 
-    /* Keep server alive if a client disconnects during broadcast. */
+    /* keep the server alive if a client disconnects during broadcast */
     signal(SIGPIPE, SIG_IGN);
 
     if (argc > 1) {
-        port = atoi(argv[1]);
+        if (parse_int_arg(argv[1], 1, 65535, &port) != 0) {
+            fprintf(stderr, "Invalid port: %s (expected 1-65535)\n", argv[1]);
+            return 1;
+        }
     }
     if (argc > 2) {
-        auto_client_count = atoi(argv[2]);
-        if (auto_client_count < 0) {
-            fprintf(stderr, "Invalid client count: %d\n", auto_client_count);
+        if (parse_int_arg(argv[2], 0, INT_MAX, &auto_client_count) != 0) {
+            fprintf(stderr, "Invalid client count: %s (expected >= 0)\n", argv[2]);
             return 1;
         }
     }

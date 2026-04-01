@@ -2,44 +2,44 @@ CC = gcc
 CFLAGS = -Wall -Wextra -std=c99 -D_POSIX_C_SOURCE=200809L
 LDFLAGS = -lm
 
-# Source files
+# source files
 SERVER_SRCS = server.c connection.c protocol.c
 CLIENT_SRCS = client.c protocol.c
 
-# Object files
+# object files
 SERVER_OBJS = $(SERVER_SRCS:.c=.o)
 CLIENT_OBJS = $(CLIENT_SRCS:.c=.o)
 
-# Targets
+# build targets
 SERVER_BINARY = server
 CLIENT_BINARY = client
 BINARIES = $(SERVER_BINARY) $(CLIENT_BINARY)
 
-# Default target
+# default target
 all: $(BINARIES)
 
-# Build server
+# build the server
 $(SERVER_BINARY): $(SERVER_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Build client
+# build the client
 $(CLIENT_BINARY): $(CLIENT_OBJS)
 	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
 
-# Compile source files to object files
+# compile source files into object files
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Clean object files and binaries
+# clean object files and binaries
 clean:
 	rm -f $(SERVER_OBJS) $(CLIENT_OBJS) $(BINARIES)
 
-# Clean only object files (keep binaries)
+# clean only object files and keep binaries
 clean-obj:
 	rm -f $(SERVER_OBJS) $(CLIENT_OBJS)
 
-# Rebuild from scratch
+# rebuild from scratch
 rebuild: clean all
 
-# Phony targets
+# phony targets
 .PHONY: all clean clean-obj rebuild

@@ -13,14 +13,15 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <signal.h>
+#include <limits.h>
 
 /*
- * client:
+ * client flow
  * - connect to the server
  * - send join
  * - wait for weights
  * - compute a local gradient
- * - send gradient back
+ * - send the gradient back
  * - keep going until terminate shows up
  */
 
@@ -58,6 +59,48 @@ static int wait_for_connect(int fd) {
         return -1;
     }
 
+    return 0;
+}
+
+static int parse_int_arg(const char *text, int min_value, int max_value, int *out_value) {
+    char *endptr;
+    long parsed;
+
+    if (text == NULL || out_value == NULL) {
+        return -1;
+    }
+
+    errno = 0;
+    parsed = strtol(text, &endptr, 10);
+    if (errno != 0 || endptr == text || *endptr != '\0') {
+        return -1;
+    }
+    if (parsed < min_value || parsed > max_value) {
+        return -1;
+    }
+
+    *out_value = (int)parsed;
+    return 0;
+}
+
+static int parse_float_range_arg(const char *text, float min_value, float max_value, float *out_value) {
+    char *endptr;
+    float parsed;
+
+    if (text == NULL || out_value == NULL) {
+        return -1;
+    }
+
+    errno = 0;
+    parsed = strtof(text, &endptr);
+    if (errno != 0 || endptr == text || *endptr != '\0') {
+        return -1;
+    }
+    if (parsed < min_value || parsed > max_value) {
+        return -1;
+    }
+
+    *out_value = parsed;
     return 0;
 }
 
@@ -181,14 +224,17 @@ int main(int argc, char **argv) {
     size_t sample_count = 0;
     size_t sample_index = 0;
 
-    /* Prevent process termination on write() to a closed socket. */
+    /* prevent the process from exiting when write hits a closed socket */
     signal(SIGPIPE, SIG_IGN);
 
     if (argc > 1) {
         host = argv[1];
     }
     if (argc > 2) {
-        port = atoi(argv[2]);
+        if (parse_int_arg(argv[2], 1, 65535, &port) != 0) {
+            fprintf(stderr, "invalid port: %s (expected 1-65535)\n", argv[2]);
+            return 1;
+        }
     }
     if (argc > next_arg) {
         const char *candidate = argv[next_arg];
@@ -204,13 +250,17 @@ int main(int argc, char **argv) {
         }
     }
     if (argc > next_arg) {
-        delay_ms = atoi(argv[next_arg]); /* delay in milliseconds for straggler simulation */
+        if (parse_int_arg(argv[next_arg], 0, INT_MAX, &delay_ms) != 0) {
+            fprintf(stderr, "invalid delay_ms: %s (expected >= 0)\n", argv[next_arg]);
+            return 1;
+        }
         next_arg++;
     }
     if (argc > next_arg) {
-        delay_probability = atof(argv[next_arg]); /* 0.0-1.0 chance to delay each gradient send */
-        if (delay_probability < 0.0f) delay_probability = 0.0f;
-        if (delay_probability > 1.0f) delay_probability = 1.0f;
+        if (parse_float_range_arg(argv[next_arg], 0.0f, 1.0f, &delay_probability) != 0) {
+            fprintf(stderr, "invalid delay_probability: %s (expected 0.0-1.0)\n", argv[next_arg]);
+            return 1;
+        }
     }
 
     if (load_dataset(dataset_path, &samples, &sample_count) != 0) {
@@ -291,7 +341,7 @@ int main(int argc, char **argv) {
 
                     printf("Received weights (dim=%u)\n", dim);
 
-                    /* Compute and send gradient */
+                    /* compute and send the gradient */
                     compute_gradient(weights, gradient, sample->x, sample->y, DEFAULT_MODEL_DIM);
 
                     printf("Computed gradient: [");

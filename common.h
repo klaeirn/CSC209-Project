@@ -4,11 +4,11 @@
 #include <stdint.h>
 
 /*
- * shared constants for the whole project. these stay pretty generic so the
- * protocol and networking code do not care about the exact ml payload yet.
+ * shared constants for the whole project
+ * keeping these generic so protocol and networking code stay decoupled from the exact ml payload for now
  */
 
-#define DEFAULT_SERVER_PORT 5000
+#define DEFAULT_SERVER_PORT 4242
 #define MAX_CLIENTS 12
 #define MAX_MESSAGE_SIZE 300
 
