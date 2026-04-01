@@ -229,6 +229,8 @@ int protocol_send_message(int fd,
     int select_status;
     fd_set write_fds;
     struct timeval tv;
+    int timeout_count = 0;
+    const int max_timeouts = 5;
 
     memset(&msg, 0, sizeof(msg));
     if (protocol_prepare_outgoing(&msg, type, payload, length) < 0) {
@@ -250,11 +252,16 @@ int protocol_send_message(int fd,
             break;
         }
         if (select_status == 0) {
-            errno = EAGAIN;
-            flush_status = -1;
-            break;
+            timeout_count++;
+            if (timeout_count >= max_timeouts) {
+                errno = ETIMEDOUT;
+                flush_status = -1;
+                break;
+            }
+            continue;
         }
 
+        timeout_count = 0;
         flush_status = protocol_flush_outgoing(fd, &msg);
     }
 

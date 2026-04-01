@@ -6,6 +6,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <errno.h>
+#include <unistd.h>
+#include <sys/wait.h>
 
 /*
  * Main server program: initializes listening socket and runs select() event loop.
@@ -18,8 +21,57 @@ int iterations = 0;
 int should_terminate = 0;
 
 ServerState server_state;
+static pid_t spawned_client_pids[64];
+static int spawned_client_count = 0;
 
 void handle_gradient(const Message *msg);
+
+static void spawn_local_clients(const char *host, int port, int count) {
+    char port_str[16];
+
+    if (count <= 0) {
+        return;
+    }
+
+    snprintf(port_str, sizeof(port_str), "%d", port);
+
+    for (int i = 1; i <= count && spawned_client_count < (int)(sizeof(spawned_client_pids) / sizeof(spawned_client_pids[0])); i++) {
+        char shard_path[64];
+        pid_t pid;
+
+        snprintf(shard_path, sizeof(shard_path), "data/client_%d.csv", i);
+        pid = fork();
+        if (pid < 0) {
+            perror("fork");
+            continue;
+        }
+
+        if (pid == 0) {
+            execl("./client",
+                  "./client",
+                  host,
+                  port_str,
+                  shard_path,
+                  (char *)NULL);
+            perror("execl ./client");
+            _exit(1);
+        }
+
+        spawned_client_pids[spawned_client_count++] = pid;
+    }
+}
+
+static void wait_for_spawned_clients(void) {
+    for (int i = 0; i < spawned_client_count; i++) {
+        int status = 0;
+        while (waitpid(spawned_client_pids[i], &status, 0) < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+    }
+}
 
 void broadcast_weights() {
     for (int i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
@@ -121,12 +173,16 @@ void handle_gradient(const Message *msg) {
         iterations++;
         printf("Weights updated (iteration=%d)\n", iterations);
 
-        broadcast_weights();
-
         if (iterations >= MAX_ITERATIONS) {
             printf("Reached MAX_ITERATIONS (%d), broadcasting TERMINATE\n", iterations);
+            /*
+             * Do not send a fresh WEIGHTS packet on the terminal round; it can
+             * trigger an unnecessary client gradient right before shutdown.
+             */
             broadcast_terminate();
             should_terminate = 1;
+        } else {
+            broadcast_weights();
         }
 
         gradient_count = 0;
@@ -136,12 +192,20 @@ void handle_gradient(const Message *msg) {
 int main(int argc, char **argv) {
     int port = DEFAULT_SERVER_PORT;
     int listening_socket;
+    int auto_client_count = 12;
 
     /* Keep server alive if a client disconnects during broadcast. */
     signal(SIGPIPE, SIG_IGN);
 
     if (argc > 1) {
         port = atoi(argv[1]);
+    }
+    if (argc > 2) {
+        auto_client_count = atoi(argv[2]);
+        if (auto_client_count < 0) {
+            fprintf(stderr, "Invalid client count: %d\n", auto_client_count);
+            return 1;
+        }
     }
 
     printf("Server starting on port %d\n", port);
@@ -164,12 +228,17 @@ int main(int argc, char **argv) {
     FD_SET(listening_socket, &server_state.read_set);
 
     printf("Listening socket initialized and ready for connections\n");
+    if (auto_client_count > 0) {
+        printf("Auto-spawning %d local clients\n", auto_client_count);
+        spawn_local_clients("127.0.0.1", port, auto_client_count);
+    }
 
     /* Run the main select() event loop */
     server_select_loop(&server_state);
 
     /* Clean up resources */
     server_cleanup(&server_state);
+    wait_for_spawned_clients();
 
     printf("Server shutting down\n");
     return 0;
