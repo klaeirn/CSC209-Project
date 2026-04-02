@@ -27,9 +27,11 @@
 
 // argument format: ./client.c [server host ip][server port][dataset CSV path][delay legnth][delay prob]
 
+// for below, fcntl is a system call to modify fd flags ! it makes it non-blocking
 static int set_nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags == -1) return -1;
+
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
@@ -54,9 +56,7 @@ static int wait_for_connect(int fd) {
         return -1;
     }
 
-    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &so_error_len) < 0) {
-        return -1;
-    }
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &so_error_len) < 0) return -1;
 
     if (so_error != 0) {
         errno = so_error;
