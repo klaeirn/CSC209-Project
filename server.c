@@ -239,7 +239,7 @@ static void aggregate_and_update_from_buffer(void) {
 
 void handle_grad(const Message *msg) {
     float grad[DEFAULT_MODEL_DIM] = {0};
-    uint32_t dim = 0;
+    int dim = 0;
     int curr_clients;
 
     if (protocol_decode_grad(msg, grad, &dim) != 0) {
