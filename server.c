@@ -238,7 +238,7 @@ void broadcast_terminate() {
 
 void handle_grad(const Message *msg) {
     float grad[DEFAULT_MODEL_DIM] = {0};
-    uint32_t dim = 0;
+    int dim = 0;
     int curr_clients;
 
     if (protocol_decode_grad(msg, grad, &dim) != 0) {
@@ -246,7 +246,7 @@ void handle_grad(const Message *msg) {
         return;
     }
     if (dim != DEFAULT_MODEL_DIM) {
-        fprintf(stderr, "Grad dimension mismatch: expected=%d got=%u\n",
+        fprintf(stderr, "Grad dimension mismatch: expected=%d got=%d\n",
                 DEFAULT_MODEL_DIM,
                 dim);
         return;

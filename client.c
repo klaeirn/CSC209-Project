@@ -334,12 +334,12 @@ int main(int argc, char **argv) {
             printf("Received message type=%u\n", msg.header.type);
 
             if (msg.header.type == MSG_WEIGHTS) {
-                uint32_t dim = 0;
+                int dim = 0;
                 if (protocol_decode_weights(&msg, weights, &dim) == 0) {
                     DataSample *sample = &samples[sample_index % sample_count];
                     sample_index++;
 
-                    printf("Received weights (dim=%u)\n", dim);
+                    printf("Received weights (dim=%d)\n", dim);
 
                     /* compute and send the grad */
                     compute_grad(weights, grad, sample->x, sample->y, DEFAULT_MODEL_DIM);
