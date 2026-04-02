@@ -34,6 +34,7 @@ static void print_curr_weights(const char *prefix) {
     if (prefix != NULL) {
         printf("%s", prefix);
     }
+
     printf("Current weights at iteration %d: [", iterations);
     for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
         printf("%.4f", weights[i]);
@@ -155,6 +156,35 @@ static int queue_client_terminate(ClientConnection *client) {
     return 0;
 }
 
+// broadcast functions
+void broadcast_weights() {
+    printf("Broadcasting updated weights to all clients...\n");
+    for (int i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
+        if (server_state.clients[i].connected) {
+            if (queue_client_weights(&server_state.clients[i]) != 0) {
+                fprintf(stderr, "Failed to queue weights for client_id=%d (fd=%d)\n",
+                        server_state.clients[i].client_id,
+                        server_state.clients[i].socket_fd);
+            }
+        }
+    }
+    printf("Weights broadcast complete.\n");
+}
+
+void broadcast_terminate() {
+    printf("Broadcasting TERMINATE to all clients...\n");
+    for (int i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
+        if (server_state.clients[i].connected) {
+            if (queue_client_terminate(&server_state.clients[i]) != 0) {
+                fprintf(stderr, "Failed to queue terminate for client_id=%d (fd=%d)\n",
+                        server_state.clients[i].client_id,
+                        server_state.clients[i].socket_fd);
+            }
+        }
+    }
+    printf("Terminate broadcast complete. Training finished.\n");
+}
+
 static void aggregate_and_update_from_buffer(void) {
     float average[DEFAULT_MODEL_DIM] = {0};
 
@@ -207,48 +237,13 @@ static void aggregate_and_update_from_buffer(void) {
     grad_window_start = 0;
 }
 
-void broadcast_weights() {
-    printf("Broadcasting updated weights to all clients...\n");
-    for (int i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
-        if (server_state.clients[i].connected) {
-            if (queue_client_weights(&server_state.clients[i]) != 0) {
-                fprintf(stderr, "Failed to queue weights for client_id=%d (fd=%d)\n",
-                        server_state.clients[i].client_id,
-                        server_state.clients[i].socket_fd);
-            }
-        }
-    }
-    printf("Weights broadcast complete.\n");
-}
-
-
-void broadcast_terminate() {
-    printf("Broadcasting TERMINATE to all clients...\n");
-    for (int i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
-        if (server_state.clients[i].connected) {
-            if (queue_client_terminate(&server_state.clients[i]) != 0) {
-                fprintf(stderr, "Failed to queue terminate for client_id=%d (fd=%d)\n",
-                        server_state.clients[i].client_id,
-                        server_state.clients[i].socket_fd);
-            }
-        }
-    }
-    printf("Terminate broadcast complete. Training finished.\n");
-}
-
 void handle_grad(const Message *msg) {
     float grad[DEFAULT_MODEL_DIM] = {0};
     uint32_t dim = 0;
     int curr_clients;
 
     if (protocol_decode_grad(msg, grad, &dim) != 0) {
-        fprintf(stderr, "Failed to decode grad\n");
-        return;
-    }
-    if (dim != DEFAULT_MODEL_DIM) {
-        fprintf(stderr, "Grad dimension mismatch: expected=%d got=%u\n",
-                DEFAULT_MODEL_DIM,
-                dim);
+        fprintf(stderr, "Failed to decode gradient\n");
         return;
     }
 
@@ -270,9 +265,7 @@ void handle_grad(const Message *msg) {
     }
 
     curr_clients = server_get_num_clients(&server_state);
-    if (curr_clients > 0 &&
-        curr_clients < THRESHOLD &&
-        grad_count >= curr_clients) {
+    if (curr_clients > 0 && curr_clients < THRESHOLD && grad_count >= curr_clients) {
         printf("Received gradients from all active clients (%d/%d); aggregating without waiting for timeout\n",
                grad_count,
                curr_clients);
@@ -284,6 +277,8 @@ void handle_grad(const Message *msg) {
         aggregate_and_update_from_buffer();
     }
 }
+
+// for slow clients 
 
 void handle_server_tick(void) {
     time_t now;
@@ -305,9 +300,7 @@ void handle_server_tick(void) {
         return;
     }
 
-    if (!grad_window_active || grad_count <= 0) {
-        return;
-    }
+    if (!grad_window_active || grad_count <= 0) return;
 
     now = time(NULL);
     if (now == (time_t)-1) {
@@ -344,14 +337,13 @@ void handle_no_clients_remaining(void) {
 
 
 void handle_message(const Message *msg) {
-    if (msg == NULL) {
-        return;
-    }
+    if (msg == NULL) return;
 
     switch (msg->header.type) {
         case MSG_JOIN:
             printf("Client joined training\n");
             saw_any_client_join = 1;
+            
             if (server_get_num_clients(&server_state) >= THRESHOLD) {
                 printf("Enough clients connected (%d >= %d), broadcasting initial weights\n", 
                        server_get_num_clients(&server_state), THRESHOLD);
