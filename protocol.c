@@ -66,9 +66,7 @@ static int protocol_validate_vector_dim(int dim) {
 }
 
 // turns a vector of floats into a binary payload. make it fixed size like we agreed on
-static int protocol_encode_vector_payload(const float *vector,
-                                          int dim,
-                                          char payload_out[PROTOCOL_VECTOR_PAYLOAD_SIZE]) {
+static int protocol_encode_vector_payload(const float *vector, int dim, char payload_out[PROTOCOL_VECTOR_PAYLOAD_SIZE]) {
     int i;
     if (vector == NULL || payload_out == NULL) {
         fprintf(stderr, "protocol_encode_vector_payload: invalid arguments\n");
@@ -86,10 +84,7 @@ static int protocol_encode_vector_payload(const float *vector,
 }
 
 // same idea as the func above but for decoding
-static int protocol_decode_vector_payload(const Message *msg,
-                                          int expected_type,
-                                          float *vector_out,
-                                          int *dim_out) {
+static int protocol_decode_vector_payload(const Message *msg, int expected_type, float *vector_out, int *dim_out) {
     int i;
     if (msg == NULL || vector_out == NULL || dim_out == NULL) {
         fprintf(stderr, "protocol_decode_vector_payload: invalid arguments\n");
@@ -219,7 +214,7 @@ void protocol_free_outgoing(OutgoingMessage *msg) {
 
 // tries to send more of a prepared outgoing message on socket
 int protocol_flush_outgoing(int fd, OutgoingMessage *msg) {
-    size_t n_written;
+    ssize_t n_written;
     size_t remaining;
 
     remaining = msg->total_len - msg->bytes_sent;
@@ -300,7 +295,7 @@ int protocol_send_message(int fd,
 
 // reads a full incoming message from the socket in chunks so callers can finish it across multiple calls
 int protocol_read_message(int fd, ConnState *state, Message *out_msg) {
-    size_t n_read;
+    ssize_t n_read;
     size_t remaining;
     // read the header
     if (state->phase == RECV_READING_HEADER) {
