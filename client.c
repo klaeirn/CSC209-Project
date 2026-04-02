@@ -71,7 +71,7 @@ typedef struct {
     float y;
 } DataSample;
 
-// parse data in array of DataSample
+// parse data into array of DataSample
 static int parse_csv_row(const char *line, DataSample *sample) {
     float x1, x2, x3, x4, y;
     if (line == NULL || sample == NULL) return -1;
@@ -198,13 +198,9 @@ int main(int argc, char **argv) {
         next_arg++;
     }
 
-    if (argc > next_arg) {
-        delay_probability = atof(argv[next_arg]);
-    }
+    if (argc > next_arg) delay_probability = atof(argv[next_arg]);
 
-    if (load_dataset(dataset_path, &samples, &sample_count) != 0) {
-        return 1;
-    }
+    if (load_dataset(dataset_path, &samples, &sample_count) != 0) return 1;
 
     printf("Client connecting to %s:%d\n", host, port);
 

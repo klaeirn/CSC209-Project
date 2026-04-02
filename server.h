@@ -29,19 +29,11 @@ void handle_grad(const Message *msg);
 void handle_server_tick(void);
 void handle_no_clients_remaining(void);
 int server_initialize_listening_socket(int port);
-
 int server_accept_new_client(int listening_socket, ClientConnection *client);
-
 int server_add_client_to_set(ServerState *state, int client_fd);
-
 int server_remove_client_from_set(ServerState *state, int client_id);
-
-ClientConnection *server_get_client_by_id(ServerState *state, int client_id);
-
 int server_get_num_clients(ServerState *state);
-
 void server_select_loop(ServerState *state);
-
 void server_cleanup(ServerState *state);
 
 #endif
