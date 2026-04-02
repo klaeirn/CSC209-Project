@@ -168,6 +168,9 @@ int server_remove_client_from_set(ServerState *state, int client_id) {
     client->client_id = -1;
 
     state->num_clients--;
+    if (state->num_clients == 0) {
+        handle_no_clients_remaining();
+    }
 
     if (old_fd == state->max_fd) {
         new_max_fd = state->listening_socket;
@@ -246,6 +249,7 @@ void server_select_loop(ServerState *state) {
         }
 
         if (select_ret == 0) {
+            handle_server_tick();
             continue;
         }
 
@@ -314,6 +318,8 @@ void server_select_loop(ServerState *state) {
                 }
             }
         }
+
+        handle_server_tick();
     }
 }
 

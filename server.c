@@ -10,18 +10,39 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <limits.h>
+#include <time.h>
 
 float weights[DEFAULT_MODEL_DIM];
 float gradient_buffer[THRESHOLD][DEFAULT_MODEL_DIM];
 int gradient_count = 0;
 int iterations = 0;
 int should_terminate = 0;
+static time_t gradient_window_start = 0;
+static int gradient_window_active = 0;
+static const int GRADIENT_TIMEOUT_SEC = 3;
+static int saw_any_client_join = 0;
 
 ServerState server_state;
 static pid_t spawned_client_pids[64];
 static int spawned_client_count = 0;
 
 void handle_gradient(const Message *msg);
+void broadcast_weights(void);
+void broadcast_terminate(void);
+
+static void print_current_weights(const char *prefix) {
+    if (prefix != NULL) {
+        printf("%s", prefix);
+    }
+    printf("Current weights at iteration %d: [", iterations);
+    for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
+        printf("%.4f", weights[i]);
+        if (i < DEFAULT_MODEL_DIM - 1) {
+            printf(", ");
+        }
+    }
+    printf("]\n");
+}
 
 static int parse_int_arg(const char *text, int min_value, int max_value, int *out_value) {
     char *endptr;
@@ -134,6 +155,58 @@ static int queue_client_terminate(ClientConnection *client) {
     return 0;
 }
 
+static void aggregate_and_update_from_buffer(void) {
+    float average[DEFAULT_MODEL_DIM] = {0};
+
+    printf("Aggregating gradients from %d client(s)...\n", gradient_count);
+
+    for (int j = 0; j < gradient_count; j++) {
+        for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
+            average[i] += gradient_buffer[j][i];
+        }
+    }
+
+    for (int j = 0; j < DEFAULT_MODEL_DIM; j++) {
+        average[j] = average[j] / gradient_count;
+    }
+
+    printf("Aggregated gradients: [");
+    for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
+        printf("%.4f", average[i]);
+        if (i < DEFAULT_MODEL_DIM - 1) printf(", ");
+    }
+    printf("]\n");
+
+    printf("Applying weight updates...\n");
+    for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
+        weights[i] -= LEARNING_RATE * average[i];
+    }
+
+    iterations++;
+    printf("Weights updated (iteration=%d): [", iterations);
+    for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
+        printf("%.4f", weights[i]);
+        if (i < DEFAULT_MODEL_DIM - 1) printf(", ");
+    }
+    printf("]\n");
+
+    if (iterations >= MAX_ITERATIONS) {
+        printf("Reached MAX_ITERATIONS (%d), broadcasting TERMINATE\n", iterations);
+        /*
+         * skip sending fresh weights on the final round
+         * this avoids an extra client gradient right before shutdown
+         */
+        broadcast_terminate();
+        should_terminate = 1;
+    } else {
+        broadcast_weights();
+    }
+
+    gradient_count = 0;
+    gradient_window_active = 0;
+    gradient_window_start = 0;
+}
+
 void broadcast_weights() {
     printf("Broadcasting updated weights to all clients...\n");
     for (int i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
@@ -166,6 +239,7 @@ void broadcast_terminate() {
 void handle_gradient(const Message *msg) {
     float gradient[DEFAULT_MODEL_DIM] = {0};
     uint32_t dim = 0;
+    int current_clients;
 
     if (protocol_decode_gradient(msg, gradient, &dim) != 0) {
         fprintf(stderr, "Failed to decode gradient\n");
@@ -190,54 +264,82 @@ void handle_gradient(const Message *msg) {
     gradient_count++;
     printf("Gradient %d/%d received\n", gradient_count, THRESHOLD);
 
-    if (gradient_count >= THRESHOLD) {
-        printf("Aggregating gradients from %d clients...\n", gradient_count);
-        float average[DEFAULT_MODEL_DIM] = {0};
-
-        for (int j = 0; j < gradient_count; j++) {
-            for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
-                average[i] += gradient_buffer[j][i];
-            }
-        }
-
-        for (int j = 0; j < DEFAULT_MODEL_DIM; j++) {
-            average[j] = average[j] / gradient_count;
-        }
-
-        printf("Aggregated gradients: [");
-        for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
-            printf("%.4f", average[i]);
-            if (i < DEFAULT_MODEL_DIM - 1) printf(", ");
-        }
-        printf("]\n");
-
-        printf("Applying weight updates...\n");
-        for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
-            weights[i] -= LEARNING_RATE * average[i];
-        }
-
-        iterations++;
-        printf("Weights updated (iteration=%d): [", iterations);
-        for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
-            printf("%.4f", weights[i]);
-            if (i < DEFAULT_MODEL_DIM - 1) printf(", ");
-        }
-        printf("]\n");
-
-        if (iterations >= MAX_ITERATIONS) {
-            printf("Reached MAX_ITERATIONS (%d), broadcasting TERMINATE\n", iterations);
-            /*
-             * skip sending fresh weights on the final round
-             * this avoids an extra client gradient right before shutdown
-             */
-            broadcast_terminate();
-            should_terminate = 1;
-        } else {
-            broadcast_weights();
-        }
-
-        gradient_count = 0;
+    if (!gradient_window_active) {
+        gradient_window_start = time(NULL);
+        gradient_window_active = 1;
     }
+
+    current_clients = server_get_num_clients(&server_state);
+    if (current_clients > 0 &&
+        current_clients < THRESHOLD &&
+        gradient_count >= current_clients) {
+        printf("Received gradients from all active clients (%d/%d); aggregating without waiting for timeout\n",
+               gradient_count,
+               current_clients);
+        aggregate_and_update_from_buffer();
+        return;
+    }
+
+    if (gradient_count >= THRESHOLD) {
+        aggregate_and_update_from_buffer();
+    }
+}
+
+void handle_server_tick(void) {
+    time_t now;
+    double elapsed_sec;
+    int current_clients;
+
+    if (should_terminate) {
+        return;
+    }
+
+    current_clients = server_get_num_clients(&server_state);
+    if (saw_any_client_join && current_clients == 0 && iterations < MAX_ITERATIONS) {
+        if (gradient_count > 0) {
+            printf("All clients disconnected with %d pending gradient(s). Discarding partial round.\n",
+                   gradient_count);
+        }
+        print_current_weights("All clients disconnected before training completed. ");
+        should_terminate = 1;
+        return;
+    }
+
+    if (!gradient_window_active || gradient_count <= 0) {
+        return;
+    }
+
+    now = time(NULL);
+    if (now == (time_t)-1) {
+        return;
+    }
+
+    elapsed_sec = difftime(now, gradient_window_start);
+    if (elapsed_sec < GRADIENT_TIMEOUT_SEC) {
+        return;
+    }
+
+    if (gradient_count < THRESHOLD) {
+        printf("Gradient timeout reached (%ds): received %d/%d gradients, aggregating partial round\n",
+               GRADIENT_TIMEOUT_SEC,
+               gradient_count,
+               THRESHOLD);
+    }
+
+    aggregate_and_update_from_buffer();
+}
+
+void handle_no_clients_remaining(void) {
+    if (should_terminate || !saw_any_client_join || iterations >= MAX_ITERATIONS) {
+        return;
+    }
+
+    if (gradient_count > 0) {
+        printf("All clients disconnected with %d pending gradient(s); discarding partial round.\n",
+               gradient_count);
+    }
+    print_current_weights("All clients disconnected before training completed. ");
+    should_terminate = 1;
 }
 
 
@@ -249,15 +351,11 @@ void handle_message(const Message *msg) {
     switch (msg->header.type) {
         case MSG_JOIN:
             printf("Client joined training\n");
+            saw_any_client_join = 1;
             if (server_get_num_clients(&server_state) >= THRESHOLD) {
                 printf("Enough clients connected (%d >= %d), broadcasting initial weights\n", 
                        server_get_num_clients(&server_state), THRESHOLD);
-                printf("Initial weights: [");
-                for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
-                    printf("%.4f", weights[i]);
-                    if (i < DEFAULT_MODEL_DIM - 1) printf(", ");
-                }
-                printf("]\n");
+                print_current_weights("Initial ");
                 broadcast_weights();
             }
             break;
