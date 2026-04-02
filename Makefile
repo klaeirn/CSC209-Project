@@ -1,58 +1,22 @@
-CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -D_POSIX_C_SOURCE=200809L
-LDFLAGS = -lm
-PORT ?= 4242
+all: server client
 
-# source files
-SERVER_SRCS = server.c connection.c protocol.c
-CLIENT_SRCS = client.c protocol.c
+server: server.o connection.o protocol.o
+	gcc -Wall -Wextra -o server server.o connection.o protocol.o -lm
 
-# object files
-SERVER_OBJS = $(SERVER_SRCS:.c=.o)
-CLIENT_OBJS = $(CLIENT_SRCS:.c=.o)
+client: client.o protocol.o
+	gcc -Wall -Wextra -o client client.o protocol.o -lm
 
-# build targets
-SERVER_BINARY = server
-CLIENT_BINARY = client
-BINARIES = $(SERVER_BINARY) $(CLIENT_BINARY)
+server.o: server.c
+	gcc -Wall -Wextra -c server.c -o server.o
 
-# default target
-all: $(BINARIES)
+connection.o: connection.c
+	gcc -Wall -Wextra -c connection.c -o connection.o
 
-# build the server
-$(SERVER_BINARY): $(SERVER_OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+protocol.o: protocol.c
+	gcc -Wall -Wextra -c protocol.c -o protocol.o
 
-# build the client
-$(CLIENT_BINARY): $(CLIENT_OBJS)
-	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS)
+client.o: client.c
+	gcc -Wall -Wextra -c client.c -o client.o
 
-# compile source files into object files
-%.o: %.c
-	$(CC) $(CFLAGS) -c $< -o $@
-
-# clean object files and binaries
 clean:
-	rm -f $(SERVER_OBJS) $(CLIENT_OBJS) $(BINARIES)
-
-# clean only object files and keep binaries
-clean-obj:
-	rm -f $(SERVER_OBJS) $(CLIENT_OBJS)
-
-# rebuild from scratch
-rebuild: clean all
-
-# run the server on configured port
-run-server: $(SERVER_BINARY)
-	./$(SERVER_BINARY) $(PORT)
-
-# run one client on configured port
-run-client: $(CLIENT_BINARY)
-	./$(CLIENT_BINARY) 127.0.0.1 $(PORT)
-
-# run server with tiny stress test mode
-run-stress: $(SERVER_BINARY)
-	./$(SERVER_BINARY) $(PORT) 12 1
-
-# phony targets
-.PHONY: all clean clean-obj rebuild run-server run-client run-stress
+	rm -f server client server.o connection.o protocol.o client.o

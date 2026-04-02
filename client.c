@@ -25,12 +25,17 @@
  * - keep going until terminate shows up
  */
 
+// argument format: ./client.c [server host ip][server port][dataset CSV path][delay legnth][delay prob]
+
+// for below, fcntl is a system call to modify fd flags ! it makes it non-blocking
 static int set_nonblocking(int fd) {
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags == -1) return -1;
+
     return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
+// connect client socket!
 static int wait_for_connect(int fd) {
     fd_set write_fds;
     struct timeval tv;
@@ -51,9 +56,8 @@ static int wait_for_connect(int fd) {
         return -1;
     }
 
-    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &so_error_len) < 0) {
-        return -1;
-    }
+    if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &so_error_len) < 0) return -1;
+
     if (so_error != 0) {
         errno = so_error;
         return -1;
@@ -62,61 +66,17 @@ static int wait_for_connect(int fd) {
     return 0;
 }
 
-static int parse_int_arg(const char *text, int min_value, int max_value, int *out_value) {
-    char *endptr;
-    long parsed;
-
-    if (text == NULL || out_value == NULL) {
-        return -1;
-    }
-
-    errno = 0;
-    parsed = strtol(text, &endptr, 10);
-    if (errno != 0 || endptr == text || *endptr != '\0') {
-        return -1;
-    }
-    if (parsed < min_value || parsed > max_value) {
-        return -1;
-    }
-
-    *out_value = (int)parsed;
-    return 0;
-}
-
-static int parse_float_range_arg(const char *text, float min_value, float max_value, float *out_value) {
-    char *endptr;
-    float parsed;
-
-    if (text == NULL || out_value == NULL) {
-        return -1;
-    }
-
-    errno = 0;
-    parsed = strtof(text, &endptr);
-    if (errno != 0 || endptr == text || *endptr != '\0') {
-        return -1;
-    }
-    if (parsed < min_value || parsed > max_value) {
-        return -1;
-    }
-
-    *out_value = parsed;
-    return 0;
-}
-
 typedef struct {
     float x[DEFAULT_MODEL_DIM];
     float y;
 } DataSample;
 
+// parse data into array of DataSample
 static int parse_csv_row(const char *line, DataSample *sample) {
     float x1, x2, x3, x4, y;
-    if (line == NULL || sample == NULL) {
-        return -1;
-    }
-    if (sscanf(line, " %f , %f , %f , %f , %f", &x1, &x2, &x3, &x4, &y) != 5) {
-        return -1;
-    }
+    if (line == NULL || sample == NULL) return -1;
+    if (sscanf(line, " %f , %f , %f , %f , %f", &x1, &x2, &x3, &x4, &y) != 5)return -1;
+
     sample->x[0] = x1;
     sample->x[1] = x2;
     sample->x[2] = x3;
@@ -151,33 +111,23 @@ static int load_dataset(const char *path, DataSample **samples_out, size_t *coun
 
     while (fgets(line, sizeof(line), fp) != NULL) {
         DataSample sample;
-        char *trim = line;
-        while (*trim == ' ' || *trim == '\t') {
-            trim++;
-        }
-        if (line[0] == '\n' || line[0] == '\r' || line[0] == '#') {
-            continue;
-        }
-        if (strncmp(trim, "x1,", 3) == 0) {
-            continue;
-        }
-        if (parse_csv_row(line, &sample) != 0) {
-            fprintf(stderr, "skipping invalid CSV row: %s", line);
-            continue;
-        }
+        if (parse_csv_row(line, &sample) != 0) continue;
+
         if (count == capacity) {
             DataSample *grown = realloc(samples, (capacity * 2) * sizeof(*samples));
+            
             if (grown == NULL) {
                 free(samples);
                 fclose(fp);
                 return -1;
             }
+
             samples = grown;
             capacity *= 2;
         }
         samples[count++] = sample;
     }
-
+    
     fclose(fp);
 
     if (count == 0) {
@@ -192,6 +142,7 @@ static int load_dataset(const char *path, DataSample **samples_out, size_t *coun
     return 0;
 }
 
+// gradient: first calculate prediction, then error degree
 void compute_grad(float *weights, float *grad, float *X, float y, int dim) {
     float prediction = 0.0f;
     for (int i = 0; i < dim; i++) {
@@ -224,18 +175,11 @@ int main(int argc, char **argv) {
     size_t sample_count = 0;
     size_t sample_index = 0;
 
-    /* prevent the process from exiting when write hits a closed socket */
+    //prevent the process from exiting when write hits a closed socket
     signal(SIGPIPE, SIG_IGN);
 
-    if (argc > 1) {
-        host = argv[1];
-    }
-    if (argc > 2) {
-        if (parse_int_arg(argv[2], 1, 65535, &port) != 0) {
-            fprintf(stderr, "invalid port: %s (expected 1-65535)\n", argv[2]);
-            return 1;
-        }
-    }
+    if (argc > 1) host = argv[1];
+    if (argc > 2) port = atoi(argv[2]);
     if (argc > next_arg) {
         const char *candidate = argv[next_arg];
         int looks_like_path = (strchr(candidate, '/') != NULL) ||
@@ -250,28 +194,15 @@ int main(int argc, char **argv) {
         }
     }
     if (argc > next_arg) {
-        if (parse_int_arg(argv[next_arg], 0, INT_MAX, &delay_ms) != 0) {
-            fprintf(stderr, "invalid delay_ms: %s (expected >= 0)\n", argv[next_arg]);
-            return 1;
-        }
+        delay_ms = atoi(argv[next_arg]);
         next_arg++;
     }
-    if (argc > next_arg) {
-        if (parse_float_range_arg(argv[next_arg], 0.0f, 1.0f, &delay_probability) != 0) {
-            fprintf(stderr, "invalid delay_probability: %s (expected 0.0-1.0)\n", argv[next_arg]);
-            return 1;
-        }
-    }
 
-    if (load_dataset(dataset_path, &samples, &sample_count) != 0) {
-        return 1;
-    }
+    if (argc > next_arg) delay_probability = atof(argv[next_arg]);
 
-    printf("Client connecting to %s:%d using %s (%zu samples)\n",
-           host,
-           port,
-           dataset_path,
-           sample_count);
+    if (load_dataset(dataset_path, &samples, &sample_count) != 0) return 1;
+
+    printf("Client connecting to %s:%d\n", host, port);
 
     socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_fd < 0) {
@@ -290,6 +221,7 @@ int main(int argc, char **argv) {
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
+
     if (inet_pton(AF_INET, host, &server_addr.sin_addr) <= 0) {
         perror("inet_pton");
         close(socket_fd);
@@ -297,8 +229,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    if (connect(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0 &&
-        errno != EINPROGRESS) {
+    if (connect(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0 && errno != EINPROGRESS) {
         perror("connect");
         close(socket_fd);
         free(samples);
@@ -313,6 +244,7 @@ int main(int argc, char **argv) {
     }
 
     printf("Connected to server\n");
+
     srand((unsigned)time(NULL) ^ (unsigned)socket_fd);
 
     protocol_init_conn_state(&recv_state);
@@ -341,7 +273,7 @@ int main(int argc, char **argv) {
 
                     printf("Received weights (dim=%d)\n", dim);
 
-                    /* compute and send the grad */
+                    // compute and send the grad
                     compute_grad(weights, grad, sample->x, sample->y, DEFAULT_MODEL_DIM);
 
                     printf("Computed grad: [");
