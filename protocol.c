@@ -66,9 +66,7 @@ static int protocol_validate_vector_dim(int dim) {
 }
 
 // turns a vector of floats into a binary payload. make it fixed size like we agreed on
-static int protocol_encode_vector_payload(const float *vector,
-                                          int dim,
-                                          char payload_out[PROTOCOL_VECTOR_PAYLOAD_SIZE]) {
+static int protocol_encode_vector_payload(const float *vector, int dim, char payload_out[PROTOCOL_VECTOR_PAYLOAD_SIZE]) {
     int i;
     if (vector == NULL || payload_out == NULL) {
         fprintf(stderr, "protocol_encode_vector_payload: invalid arguments\n");
@@ -86,10 +84,7 @@ static int protocol_encode_vector_payload(const float *vector,
 }
 
 // same idea as the func above but for decoding
-static int protocol_decode_vector_payload(const Message *msg,
-                                          int expected_type,
-                                          float *vector_out,
-                                          int *dim_out) {
+static int protocol_decode_vector_payload(const Message *msg, int expected_type, float *vector_out, int *dim_out) {
     int i;
     if (msg == NULL || vector_out == NULL || dim_out == NULL) {
         fprintf(stderr, "protocol_decode_vector_payload: invalid arguments\n");
@@ -103,8 +98,7 @@ static int protocol_decode_vector_payload(const Message *msg,
         return -1;
     }
     for (i = 0; i < PROTOCOL_VECTOR_DIM; i++) {
-        vector_out[i] = unpack_float32((const uint8_t *)msg->payload +
-                                       (i * sizeof(float)));
+        vector_out[i] = unpack_float32((const uint8_t *)msg->payload + (i * sizeof(float)));
     }
     *dim_out = PROTOCOL_VECTOR_DIM;
     return 0;
@@ -147,9 +141,7 @@ void protocol_free_message(Message *msg) {
 
 // writes a binary message header into the output buffer
 // keeps the format fixed so we can always parse it correctly
-int protocol_pack_header(char out[PROTOCOL_HEADER_SIZE],
-                         uint16_t type,
-                         uint32_t length) {
+int protocol_pack_header(char out[PROTOCOL_HEADER_SIZE], uint16_t type, uint32_t length) {
     if (out == NULL) {
         return -1;
     }
@@ -158,8 +150,7 @@ int protocol_pack_header(char out[PROTOCOL_HEADER_SIZE],
     return 0;
 }
 
-int protocol_unpack_header(const char in[PROTOCOL_HEADER_SIZE],
-                           MessageHeader *header) {
+int protocol_unpack_header(const char in[PROTOCOL_HEADER_SIZE], MessageHeader *header) {
     if (in == NULL || header == NULL) {
         return -1;
     }
@@ -169,10 +160,7 @@ int protocol_unpack_header(const char in[PROTOCOL_HEADER_SIZE],
 }
 
 // builds a complete outgoing message in memory before sending on the socket
-int protocol_prepare_outgoing(OutgoingMessage *msg,
-                              uint16_t type,
-                              const void *payload,
-                              uint32_t length) {
+int protocol_prepare_outgoing(OutgoingMessage *msg, uint16_t type, const void *payload, uint32_t length) {
     // allocate memory for the message
     msg->buffer = malloc(PROTOCOL_HEADER_SIZE + length);
     if (msg->buffer == NULL) {
@@ -192,9 +180,7 @@ int protocol_prepare_outgoing(OutgoingMessage *msg,
 }
 
 // same idea as the func above but for weights
-int protocol_prepare_weights_outgoing(OutgoingMessage *msg,
-                                      const float *weights,
-                                      int dim) {
+int protocol_prepare_weights_outgoing(OutgoingMessage *msg, const float *weights, int dim) {
     char payload[PROTOCOL_VECTOR_PAYLOAD_SIZE];
     // encode the weights
     if (protocol_encode_vector_payload(weights, dim, payload) < 0) {
@@ -219,7 +205,7 @@ void protocol_free_outgoing(OutgoingMessage *msg) {
 
 // tries to send more of a prepared outgoing message on socket
 int protocol_flush_outgoing(int fd, OutgoingMessage *msg) {
-    size_t n_written;
+    ssize_t n_written;
     size_t remaining;
 
     remaining = msg->total_len - msg->bytes_sent;
@@ -229,7 +215,7 @@ int protocol_flush_outgoing(int fd, OutgoingMessage *msg) {
         return -1;
     }
 
-    msg->bytes_sent += n_written;
+    msg->bytes_sent += (size_t)n_written;
     if (msg->bytes_sent == msg->total_len) {
         return 1;
     }
@@ -237,10 +223,7 @@ int protocol_flush_outgoing(int fd, OutgoingMessage *msg) {
 }
 
 // keeps sending the message until it's all sent or there's an error
-int protocol_send_message(int fd,
-                          uint16_t type,
-                          const void *payload,
-                          uint32_t length) {
+int protocol_send_message(int fd, uint16_t type, const void *payload, uint32_t length) {
     // initialize the outgoing message
     OutgoingMessage msg;
     int flush_status;
@@ -300,7 +283,7 @@ int protocol_send_message(int fd,
 
 // reads a full incoming message from the socket in chunks so callers can finish it across multiple calls
 int protocol_read_message(int fd, ConnState *state, Message *out_msg) {
-    size_t n_read;
+    ssize_t n_read;
     size_t remaining;
     // read the header
     if (state->phase == RECV_READING_HEADER) {
@@ -312,7 +295,7 @@ int protocol_read_message(int fd, ConnState *state, Message *out_msg) {
         if (n_read < 0) {
             return 0;
         }
-        state->header_bytes_read += n_read;
+        state->header_bytes_read += (size_t)n_read;
         if (state->header_bytes_read < PROTOCOL_HEADER_SIZE) {
             return 0;
         }
@@ -350,7 +333,7 @@ int protocol_read_message(int fd, ConnState *state, Message *out_msg) {
     if (n_read < 0) {
         return 0;
     }
-    state->payload_bytes_read += n_read;
+    state->payload_bytes_read += (size_t)n_read;
     if (state->payload_bytes_read < state->curr_header.length) {
         return 0;
     }

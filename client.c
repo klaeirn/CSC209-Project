@@ -92,11 +92,7 @@ static int load_dataset(const char *path, DataSample **samples_out, size_t *coun
     size_t capacity = 16;
     char line[256];
 
-    if (path == NULL || samples_out == NULL || count_out == NULL) {
-        errno = EINVAL;
-        return -1;
-    }
-
+    // open the dataset shard
     fp = fopen(path, "r");
     if (fp == NULL) {
         perror("fopen dataset");
@@ -109,10 +105,13 @@ static int load_dataset(const char *path, DataSample **samples_out, size_t *coun
         return -1;
     }
 
+    // read every line and keep valid samples
     while (fgets(line, sizeof(line), fp) != NULL) {
         DataSample sample;
+        // parse the csv row
         if (parse_csv_row(line, &sample) != 0) continue;
 
+        // grow storage when we run out of room
         if (count == capacity) {
             DataSample *grown = realloc(samples, (capacity * 2) * sizeof(*samples));
             
@@ -167,24 +166,28 @@ int main(int argc, char **argv) {
     Message msg;
     ConnState recv_state;
     int running = 1;
-
     int delay_ms = 0;
     float delay_probability = 0.0f;
+
     int next_arg = 3;
     DataSample *samples = NULL;
     size_t sample_count = 0;
     size_t sample_index = 0;
 
-    //prevent the process from exiting when write hits a closed socket
+    // keep the process alive if server closes while we write
     signal(SIGPIPE, SIG_IGN);
 
+    // optional host + port args
     if (argc > 1) host = argv[1];
     if (argc > 2) port = atoi(argv[2]);
+
+    // optional dataset path
     if (argc > next_arg) {
         const char *candidate = argv[next_arg];
         int looks_like_path = (strchr(candidate, '/') != NULL) ||
                               (strstr(candidate, ".csv") != NULL);
         if (looks_like_path) {
+            // check if the dataset file is readable
             if (access(candidate, R_OK) != 0) {
                 fprintf(stderr, "dataset file is not readable: %s\n", candidate);
                 return 1;
@@ -193,17 +196,37 @@ int main(int argc, char **argv) {
             next_arg++;
         }
     }
+
+    // optional delay length in milliseconds
     if (argc > next_arg) {
-        delay_ms = atoi(argv[next_arg]);
+        char *endptr = NULL;
+        long parsed_delay = strtol(argv[next_arg], &endptr, 10);
+        if (endptr == argv[next_arg] || *endptr != '\0' || parsed_delay < 0 || parsed_delay > INT_MAX) {
+            fprintf(stderr, "Invalid delay length (ms): %s\n", argv[next_arg]);
+            return 1;
+        }
+        delay_ms = (int)parsed_delay;
         next_arg++;
     }
 
-    if (argc > next_arg) delay_probability = atof(argv[next_arg]);
+    // optional chance of applying delay (0.0 to 1.0) for testing
+    if (argc > next_arg) {
+        char *endptr = NULL;
+        float parsed_probability = strtof(argv[next_arg], &endptr);
+        if (endptr == argv[next_arg] || *endptr != '\0' ||
+            parsed_probability < 0.0f || parsed_probability > 1.0f) {
+            fprintf(stderr, "Invalid delay probability: %s (expected 0.0-1.0)\n", argv[next_arg]);
+            return 1;
+        }
+        delay_probability = parsed_probability;
+    }
 
+    // load local samples
     if (load_dataset(dataset_path, &samples, &sample_count) != 0) return 1;
 
     printf("Client connecting to %s:%d\n", host, port);
 
+    // make socket
     socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     if (socket_fd < 0) {
         perror("socket");
@@ -211,6 +234,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // client expects non-blocking behavior
     if (set_nonblocking(socket_fd) < 0) {
         perror("fcntl");
         close(socket_fd);
@@ -229,6 +253,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // EINPROGRESS is normal here because connect is non-blocking
     if (connect(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0 && errno != EINPROGRESS) {
         perror("connect");
         close(socket_fd);
@@ -236,6 +261,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // block briefly until connect actually completes
     if (wait_for_connect(socket_fd) < 0) {
         perror("connect completion");
         close(socket_fd);
@@ -244,13 +270,17 @@ int main(int argc, char **argv) {
     }
 
     printf("Connected to server\n");
+    if (delay_ms > 0 && delay_probability > 0.0f) {
+        printf("Client delay enabled: %dms at probability %.2f\n", delay_ms, delay_probability);
+    }
 
-    srand((unsigned)time(NULL) ^ (unsigned)socket_fd);
-
+    // recv_state keeps track of partial protocol reads
     protocol_init_conn_state(&recv_state);
+    srand((unsigned int)time(NULL) ^ (unsigned int)getpid() ^ (unsigned int)socket_fd);
 
     memset(weights, 0, sizeof(weights));
 
+    // tell the server this client is ready
     printf("Sending JOIN message\n");
     if (protocol_send_join(socket_fd) != 0) {
         perror("send join");
@@ -260,6 +290,7 @@ int main(int argc, char **argv) {
     }
 
     while (running) {
+        // try to read exactly one full protocol message
         int read_result = protocol_read_message(socket_fd, &recv_state, &msg);
 
         if (read_result == 1) {
@@ -283,11 +314,13 @@ int main(int argc, char **argv) {
                     }
                     printf("]\n");
 
-                    if (delay_ms > 0 && ((float)rand() / RAND_MAX) < delay_probability) {
+                    // optional "slow client" simulation
+                    if (delay_ms > 0 && ((float)rand() / (float)RAND_MAX) < delay_probability) {
                         printf("Simulating client delay: %dms\n", delay_ms);
-                        usleep(delay_ms * 1000);
+                        usleep((useconds_t)delay_ms * 1000u);
                     }
 
+                    // send gradient back for aggregation
                     if (protocol_send_grad(socket_fd, grad, DEFAULT_MODEL_DIM) != 0) {
                         if (errno != EPIPE && errno != ECONNRESET) {
                             perror("send grad");
@@ -311,7 +344,6 @@ int main(int argc, char **argv) {
 
         usleep(100000); 
     }
-
     close(socket_fd);
     free(samples);
     printf("Client shutting down\n");
