@@ -64,7 +64,6 @@ int protocol_prepare_weights_outgoing(OutgoingMessage *msg, const float *weights
 int protocol_prepare_terminate_outgoing(OutgoingMessage *msg);
 
 void protocol_free_outgoing(OutgoingMessage *msg);
-
 int protocol_flush_outgoing(int fd, OutgoingMessage *msg);
 
 int protocol_send_join(int fd);
