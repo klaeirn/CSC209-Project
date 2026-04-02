@@ -13,12 +13,12 @@
 #include <time.h>
 
 float weights[DEFAULT_MODEL_DIM];
-float gradient_buffer[THRESHOLD][DEFAULT_MODEL_DIM];
-int gradient_count = 0;
+float grad_buffer[THRESHOLD][DEFAULT_MODEL_DIM];
+int grad_count = 0;
 int iterations = 0;
 int should_terminate = 0;
-static time_t gradient_window_start = 0;
-static int gradient_window_active = 0;
+static time_t grad_window_start = 0;
+static int grad_window_active = 0;
 static const int GRADIENT_TIMEOUT_SEC = 3;
 static int saw_any_client_join = 0;
 
@@ -26,11 +26,11 @@ ServerState server_state;
 static pid_t spawned_client_pids[64];
 static int spawned_client_count = 0;
 
-void handle_gradient(const Message *msg);
+void handle_grad(const Message *msg);
 void broadcast_weights(void);
 void broadcast_terminate(void);
 
-static void print_current_weights(const char *prefix) {
+static void print_curr_weights(const char *prefix) {
     if (prefix != NULL) {
         printf("%s", prefix);
     }
@@ -158,16 +158,16 @@ static int queue_client_terminate(ClientConnection *client) {
 static void aggregate_and_update_from_buffer(void) {
     float average[DEFAULT_MODEL_DIM] = {0};
 
-    printf("Aggregating gradients from %d client(s)...\n", gradient_count);
+    printf("Aggregating gradients from %d client(s)...\n", grad_count);
 
-    for (int j = 0; j < gradient_count; j++) {
+    for (int j = 0; j < grad_count; j++) {
         for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
-            average[i] += gradient_buffer[j][i];
+            average[i] += grad_buffer[j][i];
         }
     }
 
     for (int j = 0; j < DEFAULT_MODEL_DIM; j++) {
-        average[j] = average[j] / gradient_count;
+        average[j] = average[j] / grad_count;
     }
 
     printf("Aggregated gradients: [");
@@ -202,9 +202,9 @@ static void aggregate_and_update_from_buffer(void) {
         broadcast_weights();
     }
 
-    gradient_count = 0;
-    gradient_window_active = 0;
-    gradient_window_start = 0;
+    grad_count = 0;
+    grad_window_active = 0;
+    grad_window_start = 0;
 }
 
 void broadcast_weights() {
@@ -236,51 +236,51 @@ void broadcast_terminate() {
     printf("Terminate broadcast complete. Training finished.\n");
 }
 
-void handle_gradient(const Message *msg) {
-    float gradient[DEFAULT_MODEL_DIM] = {0};
+void handle_grad(const Message *msg) {
+    float grad[DEFAULT_MODEL_DIM] = {0};
     uint32_t dim = 0;
-    int current_clients;
+    int curr_clients;
 
-    if (protocol_decode_gradient(msg, gradient, &dim) != 0) {
-        fprintf(stderr, "Failed to decode gradient\n");
+    if (protocol_decode_grad(msg, grad, &dim) != 0) {
+        fprintf(stderr, "Failed to decode grad\n");
         return;
     }
     if (dim != DEFAULT_MODEL_DIM) {
-        fprintf(stderr, "Gradient dimension mismatch: expected=%d got=%u\n",
+        fprintf(stderr, "Grad dimension mismatch: expected=%d got=%u\n",
                 DEFAULT_MODEL_DIM,
                 dim);
         return;
     }
 
-    if (gradient_count >= THRESHOLD) {
-        fprintf(stderr, "Gradient buffer full, dropping gradient\n");
+    if (grad_count >= THRESHOLD) {
+        fprintf(stderr, "Grad buffer full, dropping grad\n");
         return;
     }
 
     for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
-        gradient_buffer[gradient_count][i] = gradient[i];
+        grad_buffer[grad_count][i] = grad[i];
     }
 
-    gradient_count++;
-    printf("Gradient %d/%d received\n", gradient_count, THRESHOLD);
+    grad_count++;
+    printf("Grad %d/%d received\n", grad_count, THRESHOLD);
 
-    if (!gradient_window_active) {
-        gradient_window_start = time(NULL);
-        gradient_window_active = 1;
+    if (!grad_window_active) {
+        grad_window_start = time(NULL);
+        grad_window_active = 1;
     }
 
-    current_clients = server_get_num_clients(&server_state);
-    if (current_clients > 0 &&
-        current_clients < THRESHOLD &&
-        gradient_count >= current_clients) {
+    curr_clients = server_get_num_clients(&server_state);
+    if (curr_clients > 0 &&
+        curr_clients < THRESHOLD &&
+        grad_count >= curr_clients) {
         printf("Received gradients from all active clients (%d/%d); aggregating without waiting for timeout\n",
-               gradient_count,
-               current_clients);
+               grad_count,
+               curr_clients);
         aggregate_and_update_from_buffer();
         return;
     }
 
-    if (gradient_count >= THRESHOLD) {
+    if (grad_count >= THRESHOLD) {
         aggregate_and_update_from_buffer();
     }
 }
@@ -288,24 +288,24 @@ void handle_gradient(const Message *msg) {
 void handle_server_tick(void) {
     time_t now;
     double elapsed_sec;
-    int current_clients;
+    int curr_clients;
 
     if (should_terminate) {
         return;
     }
 
-    current_clients = server_get_num_clients(&server_state);
-    if (saw_any_client_join && current_clients == 0 && iterations < MAX_ITERATIONS) {
-        if (gradient_count > 0) {
+    curr_clients = server_get_num_clients(&server_state);
+    if (saw_any_client_join && curr_clients == 0 && iterations < MAX_ITERATIONS) {
+        if (grad_count > 0) {
             printf("All clients disconnected with %d pending gradient(s). Discarding partial round.\n",
-                   gradient_count);
+                   grad_count);
         }
-        print_current_weights("All clients disconnected before training completed. ");
+        print_curr_weights("All clients disconnected before training completed. ");
         should_terminate = 1;
         return;
     }
 
-    if (!gradient_window_active || gradient_count <= 0) {
+    if (!grad_window_active || grad_count <= 0) {
         return;
     }
 
@@ -314,15 +314,15 @@ void handle_server_tick(void) {
         return;
     }
 
-    elapsed_sec = difftime(now, gradient_window_start);
+    elapsed_sec = difftime(now, grad_window_start);
     if (elapsed_sec < GRADIENT_TIMEOUT_SEC) {
         return;
     }
 
-    if (gradient_count < THRESHOLD) {
+    if (grad_count < THRESHOLD) {
         printf("Gradient timeout reached (%ds): received %d/%d gradients, aggregating partial round\n",
                GRADIENT_TIMEOUT_SEC,
-               gradient_count,
+               grad_count,
                THRESHOLD);
     }
 
@@ -334,11 +334,11 @@ void handle_no_clients_remaining(void) {
         return;
     }
 
-    if (gradient_count > 0) {
+    if (grad_count > 0) {
         printf("All clients disconnected with %d pending gradient(s); discarding partial round.\n",
-               gradient_count);
+               grad_count);
     }
-    print_current_weights("All clients disconnected before training completed. ");
+    print_curr_weights("All clients disconnected before training completed. ");
     should_terminate = 1;
 }
 
@@ -355,14 +355,14 @@ void handle_message(const Message *msg) {
             if (server_get_num_clients(&server_state) >= THRESHOLD) {
                 printf("Enough clients connected (%d >= %d), broadcasting initial weights\n", 
                        server_get_num_clients(&server_state), THRESHOLD);
-                print_current_weights("Initial ");
+                print_curr_weights("Initial ");
                 broadcast_weights();
             }
             break;
 
         case MSG_GRADIENT:
             printf("Received gradient\n");
-            handle_gradient(msg);
+            handle_grad(msg);
             break;
 
         case MSG_WEIGHTS:

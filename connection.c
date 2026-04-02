@@ -212,8 +212,8 @@ int server_get_num_clients(ServerState *state) {
 }
 
 void server_select_loop(ServerState *state) {
-    fd_set current_read_set;
-    fd_set current_write_set;
+    fd_set curr_read_set;
+    fd_set curr_write_set;
     struct timeval tv;
     int select_ret;
     int i;
@@ -226,18 +226,18 @@ void server_select_loop(ServerState *state) {
     }
 
     while (state->running) {
-        memcpy(&current_read_set, &state->read_set, sizeof(fd_set));
-        FD_ZERO(&current_write_set);
+        memcpy(&curr_read_set, &state->read_set, sizeof(fd_set));
+        FD_ZERO(&curr_write_set);
         for (i = 0; i < MAX_CLIENTS_SUPPORTED; i++) {
             client = &state->clients[i];
             if (client->connected && client->socket_fd >= 0 && client->has_outgoing) {
-                FD_SET(client->socket_fd, &current_write_set);
+                FD_SET(client->socket_fd, &curr_write_set);
             }
         }
         tv.tv_sec = 1;
         tv.tv_usec = 0;
 
-        select_ret = select(state->max_fd + 1, &current_read_set, &current_write_set, NULL, &tv);
+        select_ret = select(state->max_fd + 1, &curr_read_set, &curr_write_set, NULL, &tv);
 
         if (select_ret < 0) {
             if (errno == EINTR) {
@@ -253,7 +253,7 @@ void server_select_loop(ServerState *state) {
             continue;
         }
 
-        if (FD_ISSET(state->listening_socket, &current_read_set)) {
+        if (FD_ISSET(state->listening_socket, &curr_read_set)) {
             ClientConnection new_client;
             int client_fd = server_accept_new_client(state->listening_socket, &new_client);
 
@@ -281,7 +281,7 @@ void server_select_loop(ServerState *state) {
                 continue;
             }
 
-            if (FD_ISSET(client->socket_fd, &current_read_set)) {
+            if (FD_ISSET(client->socket_fd, &curr_read_set)) {
                 read_result = protocol_read_message(client->socket_fd, &client->recv_state, &incoming_msg);
 
                 if (read_result == 1) {
@@ -307,7 +307,7 @@ void server_select_loop(ServerState *state) {
                 continue;
             }
 
-            if (FD_ISSET(client->socket_fd, &current_write_set)) {
+            if (FD_ISSET(client->socket_fd, &curr_write_set)) {
                 int flush_result = protocol_flush_outgoing(client->socket_fd, &client->outgoing_msg);
                 if (flush_result == 1) {
                     protocol_free_outgoing(&client->outgoing_msg);

@@ -9,11 +9,11 @@
 /*
  * protocol payload format
  * - join and terminate have no payload
- * - weights and gradient always carry exactly protocol_vector_dim floats
+ * - weights and grad always carry exactly protocol_vector_dim floats
  * - each float is sent as a 32-bit ieee-754 bit pattern in network byte order
  *   so payloads stay portable across endianness like big endian and little endian
  */
-
+//delete this 
 _Static_assert(sizeof(float) == sizeof(uint32_t),
                "protocol float encoding requires 32-bit float");
 
@@ -88,7 +88,7 @@ static int protocol_decode_vector_payload(const Message *msg,
                                           uint32_t *dim_out) {
     uint32_t i;
     if (msg == NULL || vector_out == NULL || dim_out == NULL) {
-        errno = EINVAL;
+        errno = EINVAL; // perror("protocol_decode_vector_payload: invalid arguments");
         return -1;
     }
     if (protocol_validate_message(msg) < 0) {
@@ -121,8 +121,8 @@ void protocol_reset_conn_state(ConnState *state) {
     state->payload_buf = NULL;
     state->payload_bytes_read = 0;
     state->header_bytes_read = 0;
-    state->current_header.type = MSG_INVALID;
-    state->current_header.length = 0;
+    state->curr_header.type = MSG_INVALID;
+    state->curr_header.length = 0;
     state->phase = RECV_READING_HEADER;
 }
 
@@ -306,15 +306,15 @@ int protocol_read_message(int fd, ConnState *state, Message *out_msg) {
         if (state->header_bytes_read < PROTOCOL_HEADER_SIZE) {
             return 0;
         }
-        if (protocol_unpack_header(state->header_buf, &state->current_header) < 0) {
+        if (protocol_unpack_header(state->header_buf, &state->curr_header) < 0) {
             return -1;
         }
-        if (state->current_header.length > MAX_MESSAGE_SIZE) {
+        if (state->curr_header.length > MAX_MESSAGE_SIZE) {
             errno = EMSGSIZE;
             return -1;
         }
-        if (state->current_header.length == 0) {
-            out_msg->header = state->current_header;
+        if (state->curr_header.length == 0) {
+            out_msg->header = state->curr_header;
             out_msg->payload = NULL;
             if (protocol_validate_message(out_msg) < 0) {
                 protocol_reset_conn_state(state);
@@ -323,14 +323,14 @@ int protocol_read_message(int fd, ConnState *state, Message *out_msg) {
             protocol_reset_conn_state(state);
             return 1;
         }
-        state->payload_buf = malloc(state->current_header.length);
+        state->payload_buf = malloc(state->curr_header.length);
         if (state->payload_buf == NULL) {
             return -1;
         }
         state->phase = RECV_READING_PAYLOAD;
     }
 
-    remaining = state->current_header.length - state->payload_bytes_read;
+    remaining = state->curr_header.length - state->payload_bytes_read;
     n_read = read(fd, state->payload_buf + state->payload_bytes_read, remaining);
     if (n_read == 0) {
         return -1;
@@ -342,10 +342,10 @@ int protocol_read_message(int fd, ConnState *state, Message *out_msg) {
         return -1;
     }
     state->payload_bytes_read += (size_t)n_read;
-    if (state->payload_bytes_read < state->current_header.length) {
+    if (state->payload_bytes_read < state->curr_header.length) {
         return 0;
     }
-    out_msg->header = state->current_header;
+    out_msg->header = state->curr_header;
     out_msg->payload = state->payload_buf;
     if (protocol_validate_message(out_msg) < 0) {
         free(state->payload_buf);
@@ -396,9 +396,9 @@ int protocol_send_weights(int fd, const float *weights, uint32_t dim) {
     return protocol_send_message(fd, MSG_WEIGHTS, payload, PROTOCOL_VECTOR_PAYLOAD_SIZE);
 }
 
-int protocol_send_gradient(int fd, const float *gradient, uint32_t dim) {
+int protocol_send_grad(int fd, const float *grad, uint32_t dim) {
     uint8_t payload[PROTOCOL_VECTOR_PAYLOAD_SIZE];
-    if (protocol_encode_vector_payload(gradient, dim, payload) < 0) {
+    if (protocol_encode_vector_payload(grad, dim, payload) < 0) {
         return -1;
     }
     return protocol_send_message(fd, MSG_GRADIENT, payload, PROTOCOL_VECTOR_PAYLOAD_SIZE);
@@ -434,6 +434,6 @@ int protocol_decode_weights(const Message *msg, float *weights_out, uint32_t *di
     return protocol_decode_vector_payload(msg, MSG_WEIGHTS, weights_out, dim_out);
 }
 
-int protocol_decode_gradient(const Message *msg, float *gradient_out, uint32_t *dim_out) {
-    return protocol_decode_vector_payload(msg, MSG_GRADIENT, gradient_out, dim_out);
+int protocol_decode_grad(const Message *msg, float *grad_out, uint32_t *dim_out) {
+    return protocol_decode_vector_payload(msg, MSG_GRADIENT, grad_out, dim_out);
 }

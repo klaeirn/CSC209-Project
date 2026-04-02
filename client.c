@@ -192,7 +192,7 @@ static int load_dataset(const char *path, DataSample **samples_out, size_t *coun
     return 0;
 }
 
-void compute_gradient(float *weights, float *gradient, float *X, float y, int dim) {
+void compute_grad(float *weights, float *grad, float *X, float y, int dim) {
     float prediction = 0.0f;
     for (int i = 0; i < dim; i++) {
         prediction += weights[i] * X[i];
@@ -201,7 +201,7 @@ void compute_gradient(float *weights, float *gradient, float *X, float y, int di
     float error = prediction - y;
 
     for (int i = 0; i < dim; i++) {
-        gradient[i] = 2.0f * error * X[i];
+        grad[i] = 2.0f * error * X[i];
     }
 }
 
@@ -212,7 +212,7 @@ int main(int argc, char **argv) {
     int socket_fd;
     struct sockaddr_in server_addr;
     float weights[DEFAULT_MODEL_DIM];
-    float gradient[DEFAULT_MODEL_DIM];
+    float grad[DEFAULT_MODEL_DIM];
     Message msg;
     ConnState recv_state;
     int running = 1;
@@ -341,12 +341,12 @@ int main(int argc, char **argv) {
 
                     printf("Received weights (dim=%u)\n", dim);
 
-                    /* compute and send the gradient */
-                    compute_gradient(weights, gradient, sample->x, sample->y, DEFAULT_MODEL_DIM);
+                    /* compute and send the grad */
+                    compute_grad(weights, grad, sample->x, sample->y, DEFAULT_MODEL_DIM);
 
-                    printf("Computed gradient: [");
+                    printf("Computed grad: [");
                     for (int i = 0; i < DEFAULT_MODEL_DIM; i++) {
-                        printf("%.4f", gradient[i]);
+                        printf("%.4f", grad[i]);
                         if (i < DEFAULT_MODEL_DIM - 1) printf(", ");
                     }
                     printf("]\n");
@@ -356,13 +356,13 @@ int main(int argc, char **argv) {
                         usleep(delay_ms * 1000);
                     }
 
-                    if (protocol_send_gradient(socket_fd, gradient, DEFAULT_MODEL_DIM) != 0) {
+                    if (protocol_send_grad(socket_fd, grad, DEFAULT_MODEL_DIM) != 0) {
                         if (errno != EPIPE && errno != ECONNRESET) {
-                            perror("send gradient");
+                            perror("send grad");
                         }
                         running = 0;
                     } else {
-                        printf("Sent gradient\n");
+                        printf("Sent grad\n");
                     }
                 }
 

@@ -25,7 +25,7 @@ typedef struct {
     int running;        
 } ServerState;
 
-void handle_gradient(const Message *msg);
+void handle_grad(const Message *msg);
 void handle_server_tick(void);
 void handle_no_clients_remaining(void);
 int server_initialize_listening_socket(int port);

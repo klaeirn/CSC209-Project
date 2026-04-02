@@ -39,7 +39,7 @@ typedef struct {
     size_t header_bytes_read;
     uint8_t *payload_buf;
     size_t payload_bytes_read;
-    MessageHeader current_header;
+    MessageHeader curr_header;
 } ConnState;
 
 typedef struct {
@@ -79,11 +79,11 @@ int protocol_read_message(int fd, ConnState *state, Message *out_msg);
 int protocol_validate_message(const Message *msg);
 int protocol_send_join(int fd);
 int protocol_send_weights(int fd, const float *weights, uint32_t dim);
-int protocol_send_gradient(int fd, const float *gradient, uint32_t dim);
+int protocol_send_grad(int fd, const float *grad, uint32_t dim);
 int protocol_send_terminate(int fd);
 int protocol_decode_join(const Message *msg);
 int protocol_decode_terminate(const Message *msg);
 int protocol_decode_weights(const Message *msg, float *weights_out, uint32_t *dim_out);
-int protocol_decode_gradient(const Message *msg, float *gradient_out, uint32_t *dim_out);
+int protocol_decode_grad(const Message *msg, float *grad_out, uint32_t *dim_out);
 
 #endif
